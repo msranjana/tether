@@ -41,15 +41,11 @@ WORKDIR /reflex
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 
-# 1) Install reflex-vla itself WITHOUT [gpu].
-#    The [serve,monolithic] extra includes everything needed to serve
-#    a pre-exported model OR run reflex go (export+serve) in one shot.
-# 2) Pin numpy<2 because Jetson Zoo wheels are compiled against numpy 1.x
-#    and crash with ABI errors under numpy 2.x.
-# 3) Install Jetson Zoo onnxruntime-gpu over the top of any CPU wheel that
+# 1) Install reflex-vla with [jetson] extra — serve + monolithic export
+#    stack without the x86_64 [gpu] wheels or lerobot (needs Python 3.12).
+# 2) Install Jetson Zoo onnxruntime-gpu over the top of any CPU wheel that
 #    may have been pulled transitively by transformers / pi0.
-RUN pip install --no-cache-dir -e ".[serve,monolithic]" \
-  && pip install --no-cache-dir 'numpy<2' \
+RUN pip install --no-cache-dir -e ".[jetson]" \
   && pip install --no-cache-dir --index-url "${JETPACK_INDEX_URL}" onnxruntime-gpu
 
 # Runtime verification — fail the build if the GPU wheel can't see CUDA.

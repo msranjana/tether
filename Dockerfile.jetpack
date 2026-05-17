@@ -31,10 +31,10 @@ WORKDIR /reflex
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ ./src/
 
-# Install reflex + [serve,monolithic] (no [gpu] — x86 wheels would break),
-# pin numpy<2 for Jetson Zoo ABI, then install Jetson Zoo onnxruntime-gpu.
-RUN pip3 install --no-cache-dir -e ".[serve,monolithic]" \
-  && pip3 install --no-cache-dir 'numpy<2' \
+# Install reflex + [jetson] (serve + monolithic minus x86/gpu wheels).
+# Base pyproject.toml already pins numpy<2 for Jetson Zoo ABI compatibility.
+# Then overlay Jetson Zoo onnxruntime-gpu.
+RUN pip3 install --no-cache-dir -e ".[jetson]" \
   && pip3 install --no-cache-dir --index-url "${JETPACK_INDEX_URL}" onnxruntime-gpu
 
 # Verify GPU provider is importable (L4T base has CUDA libs, so this should pass).

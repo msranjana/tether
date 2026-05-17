@@ -25,7 +25,7 @@ dependencies = [
     "typer>=0.9.0",
     "rich>=13.0.0",
     "pydantic>=2.0.0",
-    "numpy>=1.24.0",
+    "numpy>=1.24.0,<2.0",
     "pyyaml>=6.0",
     # Always needed: hub access for `reflex export <hf_id>` and tokenizer/config
     # loading for the auto-detect path. Apr-14 install-path verification caught
@@ -194,6 +194,27 @@ curate-rlds = [
     "tensorflow>=2.13.0",
 ]
 
+
+# Jetson / ARM64 edge stack.
+#   - Skips [gpu] x86_64 wheels (onnxruntime-gpu PyPI has no aarch64 builds)
+#   - Skips lerobot (0.5.1 requires Python 3.12; JetPack 6 ships 3.10)
+#   - User must pre-install Jetson Zoo onnxruntime-gpu from pypi.jetson-ai-lab.io
+#     and mount host CUDA via --runtime=nvidia.
+jetson = [
+    # serve stack
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "Pillow>=10.0.0",
+    "jsonschema>=4.0",
+    "prometheus-client>=0.19.0",
+    # monolithic export stack minus lerobot
+    "transformers==5.3.0",
+    "onnx-diagnostic>=0.9",
+    "onnxscript>=0.1",
+    "optree",
+    "scipy",
+    "num2words",
+]
 [project.scripts]
 reflex = "reflex.cli:app"
 
