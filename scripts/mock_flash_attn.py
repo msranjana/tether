@@ -66,7 +66,7 @@ for submod in ["layers", "modules", "ops"]:
         f.write(f"# flash_attn.{submod} stub\n")
 
 with open(os.path.join(base, "layers", "rotary.py"), "w") as f:
-    f.write("# stub\nclass RotaryEmbedding: pass\n")
+    f.write("# stub\nclass RotaryEmbedding: pass\ndef apply_rotary_emb(*a, **k): raise RuntimeError('stub')\n")
 
 with open(os.path.join(base, "bert_padding.py"), "w") as f:
     f.write("# stub\ndef unpad_input(*a, **k): raise RuntimeError('stub')\ndef pad_input(*a, **k): raise RuntimeError('stub')\n")
