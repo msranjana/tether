@@ -80,7 +80,7 @@ image = (
         "torchvision",
         "safetensors>=0.4.0",
         "huggingface_hub",
-        "transformers>=4.48",
+        "transformers==4.53.2",
         "numpy",
         "Pillow",
         "pydantic>=2.0",
