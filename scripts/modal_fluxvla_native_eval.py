@@ -125,18 +125,10 @@ image = (
         remote_path=FLUXVLA_SRC,
         copy=True,
     )
+    .add_local_file("scripts/patch_fluxvla_setup.py", "/root/patch_fluxvla_setup.py", copy=True)
     .run_commands(
-        # Install fluxvla in develop mode WITHOUT ext_modules (skip CUDA build).
-        # We patch setup.py to remove ext_modules since we only need the pure
-        # PyTorch PI05FlowMatching, not the Triton inference variant.
-        f"cd {FLUXVLA_SRC} && python -c \""
-        "import re, pathlib; "
-        "p = pathlib.Path('setup.py'); "
-        "t = p.read_text(); "
-        "t = re.sub(r'ext_modules=\\[.*?\\]', 'ext_modules=[]', t, flags=re.DOTALL); "
-        "t = re.sub(r\"cmdclass=\\{'build_ext': BuildExtension\\}\", 'cmdclass={}', t); "
-        "p.write_text(t)\" "
-        f"&& cd {FLUXVLA_SRC} && pip install -e . --no-deps",
+        "python /root/patch_fluxvla_setup.py"
+        f" && cd {FLUXVLA_SRC} && pip install -e . --no-deps",
     )
     .env({
         "HF_HOME": HF_CACHE_PATH,
