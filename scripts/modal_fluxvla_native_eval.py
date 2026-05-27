@@ -110,6 +110,15 @@ image = (
         "tqdm",
         "datasets>=4.0",
         "jsonlines",
+        "wandb",
+        "timm",
+        "peft",
+        "diffusers==0.30.2",
+        "matplotlib",
+        "sentry-sdk",
+        "tqdm-loggable",
+        "thop",
+        "cloudpickle",
     )
     # Clone + patch LIBERO (same as modal_fluxvla_checkpoint_eval.py)
     .run_commands(
