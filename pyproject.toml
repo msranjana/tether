@@ -267,16 +267,12 @@ reflex = "reflex.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/reflex"]
-# Note: embodiment preset JSONs at src/reflex/embodiments/presets/*.json are
-# auto-included by hatchling because they live inside the package directory.
-# Explicit force-include caused duplicate entries — removed in v0.5.2.
-
-# CUDA C++ extension sources (Lift #5 — src/reflex/kernels/cuda/*/src/*.{cpp,cu}).
-# These need to be in the wheel so the JIT loader can find them at first import
-# on a CUDA host. Hatchling defaults to Python files only; explicit include
-# pulls in the C++/CUDA sources.
-[tool.hatch.build.targets.wheel.force-include]
-"src/reflex/kernels" = "reflex/kernels"
+# Hatchling auto-includes .py + data files from packages. The artifacts
+# directive ensures C++/CUDA extension sources (Lift #5 JIT kernels at
+# src/reflex/kernels/cuda/*/src/*.{cpp,cu}) and license/attribution files
+# are also included. A prior force-include of "src/reflex/kernels" caused
+# duplicate ZIP entries (rejected by PyPI) — removed in v0.11.1.
+artifacts = ["*.cpp", "*.cu", "*.txt", "*.json"]
 
 [tool.ruff]
 target-version = "py310"
