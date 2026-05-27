@@ -125,11 +125,10 @@ image = (
         remote_path=FLUXVLA_SRC,
         copy=True,
     )
-    .add_local_file("scripts/patch_fluxvla_setup.py", "/root/patch_fluxvla_setup.py", copy=True)
-    .run_commands(
-        "python /root/patch_fluxvla_setup.py"
-        f" && cd {FLUXVLA_SRC} && pip install -e . --no-deps",
-    )
+    # No pip install needed — PYTHONPATH includes FLUXVLA_SRC (set in .env below).
+    # FluxVLA's setup.py imports torch at top level which isn't available during
+    # image build, and editable installs fail on Modal's pip version. PYTHONPATH
+    # is sufficient since we only need the Python modules, not the CUDA extensions.
     .env({
         "HF_HOME": HF_CACHE_PATH,
         "TRANSFORMERS_CACHE": f"{HF_CACHE_PATH}/transformers",
