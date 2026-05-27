@@ -62,125 +62,31 @@ FLUXVLA_SRC = "/opt/FluxVLA"
 
 
 # ---------------------------------------------------------------------------
-# Image: proven LIBERO recipe from modal_fluxvla_checkpoint_eval.py
-# + FluxVLA source mounted and pip-installed (no CUDA ext build)
-# + mmengine + tensorflow (FluxVLA eval_utils uses tf for image resize)
+# Image: Dockerfile with FluxVLA's EXACT dependency pins.
+# No more version conflicts — this matches their tested environment.
 # ---------------------------------------------------------------------------
 image = (
-    modal.Image.debian_slim(python_version="3.12")
-    .apt_install(
-        "git",
-        "libgl1-mesa-glx", "libglib2.0-0", "libegl1-mesa", "libglvnd0", "ffmpeg",
-        "cmake", "build-essential",
-        "libosmesa6", "libosmesa6-dev",
-        "clang", "ninja-build",
+    modal.Image.from_dockerfile(
+        os.path.join(REPO_ROOT, "scripts", "Dockerfile.fluxvla_eval"),
+        context_mount=modal.Mount.from_local_dir(REPO_ROOT, remote_path="/build"),
     )
-    .pip_install(
-        "torch",
-        "torchvision",
-        "nvidia-cudnn-cu12>=9.5",
-        "nvidia-cublas-cu12>=12.6",
-        "nvidia-curand-cu12>=10.0,<12.0",
-        "nvidia-cufft-cu12>=11.0,<13.0",
-        "nvidia-cusparse-cu12>=12.0,<13.0",
-        "nvidia-cusolver-cu12>=11.0,<13.0",
-        "nvidia-cuda-runtime-cu12>=12.0,<13.0",
-        "nvidia-cuda-nvrtc-cu12>=12.0,<13.0",
-        "safetensors>=0.4.0",
-        "huggingface_hub",
-        "transformers==4.53.2",
-        "numpy<2",
-        "Pillow",
-        "pydantic>=2.0",
-        "pyyaml",
-        "mujoco==3.3.2",
-        "robosuite==1.4.1",
-        "h5py",
-        "bddl==1.0.1",
-        "future",
-        "robomimic",
-        "hydra-core>=1.1",
-        "easydict",
-        "einops",
-        "opencv-python-headless",
-        "gym",
-        "gymnasium",
-        "num2words",
-        "imageio",
-        "imageio-ffmpeg",
-        # FluxVLA-specific deps (loose pins — let lerobot resolve conflicts)
-        "mmengine",
-        "accelerate",
-        "sentencepiece",
-        "tensorflow>=2.15",
-        "draccus",
-        "rich",
-        "tqdm",
-        "datasets>=4.0",
-        "jsonlines",
-        "wandb",
-        "timm",
-        "peft",
-        "diffusers",
-        "matplotlib",
-        "sentry-sdk",
-        "tqdm-loggable",
-        "thop",
-        "cloudpickle",
-        "boto3",
-        "botocore",
-        "gcsfs",
-        "types-boto3-s3",
-        "av",
-    )
-    .run_commands(
-        "pip install tensorflow-datasets tensorflow-graphics"
-        " && pip install --no-deps dlimp@git+https://github.com/kvablack/dlimp"
-    )
-    # Clone + patch LIBERO
-    .run_commands(
-        "git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git /opt/LIBERO"
-        " && cd /opt/LIBERO && pip install . --no-deps"
-    )
+    # Patch LIBERO input() calls
     .add_local_file("scripts/patch_libero.py", "/root/patch_libero.py", copy=True)
     .run_commands("python /root/patch_libero.py")
-    # Mount FluxVLA source (PYTHONPATH handles imports, no pip install needed)
+    # Mount FluxVLA source (PYTHONPATH handles imports)
     .add_local_dir(
         os.path.join(REPO_ROOT, "reference", "FluxVLA"),
         remote_path=FLUXVLA_SRC,
         copy=True,
     )
-    # Stub flash_attn + FluxVLA CUDA extensions AFTER source is mounted
+    # Stub FluxVLA's CUDA extensions (we use PI05FlowMatching, not the Triton variant)
     .add_local_file("scripts/mock_flash_attn.py", "/root/mock_flash_attn.py", copy=True)
     .run_commands("python /root/mock_flash_attn.py")
     .env({
         "HF_HOME": HF_CACHE_PATH,
         "TRANSFORMERS_CACHE": f"{HF_CACHE_PATH}/transformers",
-        "MUJOCO_GL": "osmesa",
-        "PYOPENGL_PLATFORM": "osmesa",
-        "TORCHINDUCTOR_DISABLE": "1",
-        "CUDA_VISIBLE_DEVICES_FOR_TF": "none",
-        "TF_CPP_MIN_LOG_LEVEL": "3",
-        "TRANSFORMERS_NO_FLASH_ATTENTION": "1",
-        "ATTN_BACKEND": "sdpa",
-        "LIBERO_DATA_DIR": "/tmp/libero_data",
-        "LIBERO_ASSET_DIR": "/opt/LIBERO/libero/libero/assets",
-        "LIBERO_BASE": "/tmp/libero_data",
         "PYTHONPATH": f"/opt/LIBERO:{FLUXVLA_SRC}",
-        "LD_LIBRARY_PATH": (
-            "/usr/local/lib/python3.12/site-packages/nvidia/cuda_runtime/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/curand/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/cufft/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/cusparse/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/cusolver/lib:"
-            "/usr/local/lib/python3.12/site-packages/nvidia/nvjitlink/lib:"
-            "/usr/local/cuda/lib64"
-        ),
     })
-    .run_commands("mkdir -p /tmp/libero_data")
 )
 
 
@@ -235,11 +141,6 @@ def run_fluxvla_native_eval(
     import logging
     import time
     from pathlib import Path
-
-    # Disable TF GPU access BEFORE any import — TF grabs CUDA and corrupts
-    # mujoco's osmesa GL context, causing SIGSEGV in OffScreenRenderEnv.
-    import tensorflow as tf
-    tf.config.set_visible_devices([], "GPU")
 
     import torch
     import tqdm
