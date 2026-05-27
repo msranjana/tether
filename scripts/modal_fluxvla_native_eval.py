@@ -76,8 +76,8 @@ image = (
         "clang", "ninja-build",
     )
     .pip_install(
-        "torch==2.6.0",
-        "torchvision==0.21.0",
+        "torch",
+        "torchvision",
         "safetensors>=0.4.0",
         "huggingface_hub",
         "transformers>=4.48,<4.54",
