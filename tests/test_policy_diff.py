@@ -115,9 +115,56 @@ def test_policy_diff_shadow_actions(tmp_path: Path) -> None:
     )
 
     assert report["mode"] == "shadow_trace"
-    assert report["candidate"] == {"source": "routing.shadow_actions"}
+    assert report["candidate"] == {"source": "shadow_result or routing.shadow_actions"}
     assert report["summary"]["verdict"] == "pass"
     assert report["summary"]["compared"] == 1
+
+
+def test_policy_diff_shadow_result_records(tmp_path: Path) -> None:
+    writer = RecordWriter(
+        record_dir=tmp_path / "background_shadow",
+        model_hash="deadbeefcafe0000",
+        config_hash="0011223344556677",
+        export_dir=str(tmp_path / "fake_export"),
+        model_type="pi0.5",
+        export_kind="monolithic",
+        providers=["CPUExecutionProvider"],
+        gzip_output=False,
+    )
+    seq = writer.write_request(
+        chunk_id=0,
+        image_b64="aGVsbG8=",
+        instruction="sampled",
+        state=[0.1],
+        actions=[[0.1, 0.2]],
+        action_dim=2,
+        latency_total_ms=100.0,
+        routing={"shadow_sampled": True, "shadow_pending": True},
+    )
+    writer.write_shadow_result(
+        seq=seq,
+        actions=[[0.11, 0.21]],
+        action_dim=2,
+        latency_total_ms=12.0,
+        routing={
+            "shadow_sampled": True,
+            "shadow_mode": "background",
+            "shadow_actions": [[0.11, 0.21]],
+            "shadow_latency_ms": 12.0,
+        },
+    )
+    writer.write_footer({"total_requests": 1})
+    writer.close()
+
+    report = diff_policy_traces(
+        baseline_trace=writer.filepath,
+        shadow=True,
+        max_action_delta=0.05,
+    )
+
+    assert report["summary"]["verdict"] == "pass"
+    assert report["summary"]["compared"] == 1
+    assert report["summary"]["shadow_pending"] == 0
 
 
 def test_policy_diff_shadow_skips_unsampled_rows(tmp_path: Path) -> None:

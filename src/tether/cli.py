@@ -2285,14 +2285,20 @@ def serve(
         "", "--shadow-policy",
         help="Shadow inference: path to a policy that runs alongside "
              "the primary on a sample of traffic. Candidate actions are recorded "
-             "as routing.shadow_actions for `tether policy diff --shadow`; they "
-             "are never returned to the robot client. Mutually exclusive with "
+             "as shadow evidence for `tether policy diff --shadow`; they are "
+             "never returned to the robot client. Mutually exclusive with "
              "--policy-b.",
     ),
     shadow_sample: float = typer.Option(
         1.0, "--shadow-sample",
         help="Fraction of /act requests to mirror to --shadow-policy in [0, 1]. "
              "Default 1.0 when a shadow policy is set.",
+    ),
+    shadow_queue_size: int = typer.Option(
+        32, "--shadow-queue-size",
+        help="Bounded queue for background shadow inference. 0 disables shadow "
+             "queueing. Overload records a shadow_queue_full result instead of "
+             "blocking live /act responses.",
     ),
     no_rtc: bool = typer.Option(
         False, "--no-rtc",
@@ -2341,6 +2347,9 @@ def serve(
         raise typer.Exit(1)
     if shadow_sample < 0.0 or shadow_sample > 1.0:
         err_console.print("[red]--shadow-sample must be in [0, 1].[/red]")
+        raise typer.Exit(1)
+    if shadow_queue_size < 0:
+        err_console.print("[red]--shadow-queue-size must be >= 0.[/red]")
         raise typer.Exit(1)
     if two_policy_mode:
         from tether.runtime.policy import validate_split_and_no_rtc
@@ -2728,6 +2737,7 @@ def serve(
         policy_crash_threshold=max_consecutive_crashes,
         shadow_policy=shadow_policy or None,
         shadow_sample=shadow_sample,
+        shadow_queue_size=shadow_queue_size,
     )
     if api_key:
         composed.append("[cyan]api-key-auth[/cyan]")
@@ -2769,7 +2779,10 @@ def serve(
     if a2c2_checkpoint:
         composed.append(f"[cyan]a2c2[/cyan]={Path(a2c2_checkpoint).name}")
     if shadow_policy:
-        composed.append(f"[cyan]shadow[/cyan]={Path(shadow_policy).name}@{shadow_sample:g}")
+        composed.append(
+            f"[cyan]shadow[/cyan]={Path(shadow_policy).name}"
+            f"@{shadow_sample:g}/q={shadow_queue_size}"
+        )
     if auto_calibrate:
         composed.append("[cyan]auto-calibrate[/cyan]" + ("[force]" if calibrate_force else ""))
     composed.append(f"[cyan]batch-budget[/cyan]={max_batch_cost_ms:g}ms")
@@ -3534,7 +3547,7 @@ def deploy_proof(
     policy_diff_shadow: bool = typer.Option(
         False,
         "--policy-diff-shadow",
-        help="Compare --policy-diff-baseline response.actions with routing.shadow_actions.",
+        help="Compare --policy-diff-baseline response.actions with shadow evidence.",
     ),
     policy_diff_fail_on: str = typer.Option(
         "",
@@ -5502,7 +5515,7 @@ def policy_diff_cmd(
     shadow: bool = typer.Option(
         False,
         "--shadow",
-        help="Compare response.actions with routing.shadow_actions in one trace.",
+        help="Compare response.actions with shadow evidence in one trace.",
     ),
     min_action_cos: float = typer.Option(
         0.995,

@@ -570,6 +570,48 @@ class RecordWriter:
                 logger.debug("curate dual-write skipped: %s", exc)
         return seq
 
+    def write_shadow_result(
+        self,
+        *,
+        seq: int,
+        routing: dict[str, Any],
+        actions: list[list[float]] | None = None,
+        action_dim: int = 0,
+        latency_total_ms: float | None = None,
+        episode_id: str | None = None,
+        request_id: str | None = None,
+        error: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit append-only shadow policy evidence for an existing request seq."""
+        if self.degraded:
+            return
+        self._write_header()
+        record: dict[str, Any] = {
+            "kind": "shadow_result",
+            "schema_version": SCHEMA_VERSION,
+            "seq": seq,
+            "timestamp": _utc_now_iso(),
+            "routing": routing,
+        }
+        request_obj: dict[str, Any] = {}
+        if episode_id is not None:
+            request_obj["episode_id"] = episode_id
+        if request_id is not None:
+            request_obj["request_id"] = request_id
+        if request_obj:
+            record["request"] = request_obj
+        if actions is not None:
+            record["response"] = {
+                "actions": actions,
+                "num_actions": len(actions),
+                "action_dim": action_dim,
+            }
+        if latency_total_ms is not None:
+            record["latency"] = {"total_ms": latency_total_ms}
+        if error is not None:
+            record["error"] = error
+        self._emit(record)
+
     def write_footer(self, totals: dict[str, int]) -> None:
         """Emit footer on clean shutdown. Optional per D.1.6 — readers
         tolerate absence."""

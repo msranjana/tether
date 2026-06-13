@@ -146,7 +146,8 @@ path exported by `tether profiles init`.
 
 Policy rollout gates that operate on recorded traces. Today the main command is
 `policy diff`: compare a baseline trace with a candidate trace, or compare a
-single shadow trace's recorded production actions against `routing.shadow_actions`.
+single shadow trace's recorded production actions against shadow evidence
+(`shadow_result` rows, with legacy `routing.shadow_actions` still supported).
 
 ```bash
 # Offline promotion check: same observations, candidate policy output
@@ -176,11 +177,12 @@ tether serve ./tether_export/ --safety-config safety_limits.json
 # With API auth (X-Tether-Key or Authorization: Bearer)
 tether serve ./tether_export/ --api-key "$TETHER_API_KEY"
 
-# Shadow a candidate policy without sending candidate actions to the robot
+# Shadow a candidate policy without blocking live robot responses
 tether serve ./current_export/ \
   --shadow-policy ./candidate_export/ \
   --record ./traces/shadow \
-  --shadow-sample 1.0
+  --shadow-sample 1.0 \
+  --shadow-queue-size 32
 
 # Adaptive denoising for lower latency
 tether serve ./tether_export/ --adaptive-steps
@@ -197,8 +199,9 @@ tether serve ./tether_export/ --adaptive-steps
 | `--adaptive-steps` | `false` | Early-stop denoising when velocity norm converges (`tether turbo` heritage) |
 | `--api-key` | _(none)_ | Require auth header on `/act` and `/config` |
 | `--cloud-fallback` | _(none)_ | URL of a remote `tether serve` for cloud-edge split-execution |
-| `--shadow-policy` | _(none)_ | Mirror sampled `/act` requests to a candidate export and record `routing.shadow_actions` |
+| `--shadow-policy` | _(none)_ | Mirror sampled `/act` requests to a candidate export and record shadow evidence |
 | `--shadow-sample` | `1.0` | Fraction of traffic mirrored when `--shadow-policy` is set |
+| `--shadow-queue-size` | `32` | Bounded background shadow queue; overload records `shadow_queue_full` instead of blocking `/act` |
 | `--ros2` | `false` | Short-circuit HTTP and run the [ROS2 bridge](#advanced-commands) instead |
 
 Full flag list: `tether serve --help`.

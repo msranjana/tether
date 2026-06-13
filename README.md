@@ -376,7 +376,8 @@ mismatches, and guard regressions.
 
 Use `tether serve ./current --shadow-policy ./candidate --record ./traces/shadow`
 to collect a single shadow trace where production actions stay live and
-candidate actions are recorded under `routing.shadow_actions`.
+candidate actions are appended as `shadow_result` evidence for
+`tether policy diff --shadow`.
 
 ```bash
 tether prove ./p0 \

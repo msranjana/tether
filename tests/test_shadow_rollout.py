@@ -101,6 +101,8 @@ def test_shadow_policy_records_candidate_actions_without_returning_them(
         body = response.json()
         assert body["actions"][0][0] == pytest.approx(0.05)
         assert body["shadow_sampled"] is True
+        assert body["shadow_pending"] is True
+        assert body["shadow_mode"] == "background"
         assert "shadow_actions" not in body
 
     trace_paths = list(record_dir.glob("*.jsonl"))
@@ -111,11 +113,20 @@ def test_shadow_policy_records_candidate_actions_without_returning_them(
         if line.strip()
     ]
     request_record = next(record for record in records if record["kind"] == "request")
+    shadow_record = next(
+        record for record in records if record["kind"] == "shadow_result"
+    )
 
     assert request_record["response"]["actions"][0][0] == pytest.approx(0.05)
     routing = request_record["routing"]
     assert routing["shadow_sampled"] is True
-    assert routing["shadow_actions"][0][0] == pytest.approx(0.07)
+    assert routing["shadow_pending"] is True
+    assert "shadow_actions" not in routing
+
+    shadow_routing = shadow_record["routing"]
+    assert shadow_record["seq"] == request_record["seq"]
+    assert shadow_routing["shadow_sampled"] is True
+    assert shadow_routing["shadow_actions"][0][0] == pytest.approx(0.07)
     assert routing["shadow_policy_export_dir"] == str(shadow_export)
 
     from tether.policy_diff import diff_policy_traces

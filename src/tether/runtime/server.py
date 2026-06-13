@@ -27,6 +27,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -144,6 +145,19 @@ def _shadow_sample_decision(request: Any, sample_rate: float) -> tuple[bool, str
     return score < rate, key, score
 
 
+def _snapshot_predict_request(request: Any) -> Any:
+    state = getattr(request, "state", None)
+    return SimpleNamespace(
+        image=getattr(request, "image", None),
+        image_wrist=getattr(request, "image_wrist", None),
+        instruction=getattr(request, "instruction", "") or "",
+        state=list(state) if state is not None else None,
+        episode_id=getattr(request, "episode_id", None),
+        request_id=getattr(request, "request_id", None),
+        session_id=getattr(request, "session_id", None),
+    )
+
+
 def _actions_for_record(value: Any) -> list[list[float]] | None:
     if not isinstance(value, list) or not value:
         return None
@@ -152,7 +166,7 @@ def _actions_for_record(value: Any) -> list[list[float]] | None:
     return value
 
 
-async def _run_shadow_policy_for_record(
+def _shadow_routing_for_request(
     server: Any,
     request: Any,
     production_result: dict[str, Any],
@@ -177,6 +191,21 @@ async def _run_shadow_policy_for_record(
     if isinstance(production_result, dict) and "error" in production_result:
         record["shadow_sampled"] = False
         record["shadow_skip_reason"] = "production_error"
+        return record
+    return record
+
+
+async def _complete_shadow_policy_record(
+    server: Any,
+    request: Any,
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    if not record.get("shadow_sampled"):
+        return record
+    shadow_server = getattr(server, "_shadow_server", None)
+    if shadow_server is None:
+        record["shadow_sampled"] = False
+        record["shadow_skip_reason"] = "shadow_server_missing"
         return record
 
     t0 = time.perf_counter()
@@ -211,6 +240,91 @@ async def _run_shadow_policy_for_record(
         except (TypeError, ValueError):
             pass
     return record
+
+
+async def _run_shadow_policy_for_record(
+    server: Any,
+    request: Any,
+    production_result: dict[str, Any],
+) -> dict[str, Any] | None:
+    record = _shadow_routing_for_request(server, request, production_result)
+    if record is None:
+        return None
+    return await _complete_shadow_policy_record(server, request, record)
+
+
+def _write_shadow_result_record(
+    recorder: Any,
+    *,
+    seq: int,
+    request: Any,
+    routing: dict[str, Any],
+) -> None:
+    actions = _actions_for_record(routing.get("shadow_actions"))
+    error = None
+    if routing.get("shadow_error"):
+        error = {
+            "slug": "shadow-error",
+            "message": str(routing.get("shadow_error"))[:500],
+        }
+    recorder.write_shadow_result(
+        seq=seq,
+        routing=routing,
+        actions=actions,
+        action_dim=int(routing.get("shadow_action_dim") or 0),
+        latency_total_ms=(
+            float(routing["shadow_latency_ms"])
+            if routing.get("shadow_latency_ms") is not None
+            else None
+        ),
+        episode_id=getattr(request, "episode_id", None),
+        request_id=getattr(request, "request_id", None),
+        error=error,
+    )
+
+
+async def _shadow_worker_loop(server: Any) -> None:
+    queue = getattr(server, "_shadow_queue", None)
+    if queue is None:
+        return
+    while True:
+        item = await queue.get()
+        try:
+            request = item["request"]
+            routing = dict(item["routing"])
+            completed = await _complete_shadow_policy_record(server, request, routing)
+            recorder = getattr(server, "_recorder", None)
+            if recorder is not None:
+                _write_shadow_result_record(
+                    recorder,
+                    seq=int(item["seq"]),
+                    request=request,
+                    routing=completed,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("shadow_policy.worker_failed: %s", exc)
+        finally:
+            queue.task_done()
+
+
+async def _stop_shadow_worker(server: Any, *, timeout_s: float = 5.0) -> None:
+    task = getattr(server, "_shadow_worker_task", None)
+    queue = getattr(server, "_shadow_queue", None)
+    if task is None or queue is None:
+        return
+    import asyncio as _asyncio
+    try:
+        await _asyncio.wait_for(queue.join(), timeout=timeout_s)
+    except _asyncio.TimeoutError:
+        logger.warning(
+            "shadow_policy queue did not drain within %.1fs; cancelling worker",
+            timeout_s,
+        )
+    task.cancel()
+    try:
+        await task
+    except _asyncio.CancelledError:
+        pass
 
 
 def _record_rtc_adaptive_signal(
@@ -1585,6 +1699,7 @@ def create_app(
     policy_crash_threshold: int = 5,  # per-slot circuit-breaker threshold
     shadow_policy: str | None = None,  # shadow mode: mirror sampled traffic to this export
     shadow_sample: float = 1.0,  # fraction of /act traffic mirrored to shadow_policy
+    shadow_queue_size: int = 32,  # bounded pending shadow requests; 0 disables queueing
 ) -> Any:
     """Create a FastAPI app for serving VLA predictions.
 
@@ -1649,6 +1764,8 @@ def create_app(
         raise ValueError("shadow_sample must be a float in [0, 1]") from exc
     if _shadow_sample_rate < 0.0 or _shadow_sample_rate > 1.0:
         raise ValueError("shadow_sample must be in [0, 1]")
+    if int(shadow_queue_size) < 0:
+        raise ValueError("shadow_queue_size must be >= 0")
 
     # Dispatch order:
     #   1. TETHER_NATIVE=1 — SmolVLANativeServer (PyTorch native path)
@@ -1883,6 +2000,9 @@ def create_app(
     server._shadow_sample = _shadow_sample_rate if shadow_policy else 0.0  # type: ignore[attr-defined]
     server._shadow_model_hash = ""  # type: ignore[attr-defined]
     server._shadow_config_hash = ""  # type: ignore[attr-defined]
+    server._shadow_queue = None  # type: ignore[attr-defined]
+    server._shadow_worker_task = None  # type: ignore[attr-defined]
+    server._shadow_queue_size = int(shadow_queue_size)  # type: ignore[attr-defined]
 
     # Synthetic latency injection (B.4). Clamped to [0, 1000] ms. The
     # /act handler sleeps for this long AFTER inference + recording so
@@ -2398,6 +2518,19 @@ def create_app(
                 shadow_export_path,
                 _shadow_sample_rate,
             )
+            if _shadow_sample_rate > 0 and int(shadow_queue_size) > 0:
+                import asyncio as _asyncio_shadow
+                server._shadow_queue = _asyncio_shadow.Queue(  # type: ignore[attr-defined]
+                    maxsize=int(shadow_queue_size)
+                )
+                server._shadow_worker_task = _asyncio_shadow.create_task(  # type: ignore[attr-defined]
+                    _shadow_worker_loop(server),
+                    name="tether-shadow-policy-worker",
+                )
+                logger.info(
+                    "Shadow worker started: queue_size=%d",
+                    int(shadow_queue_size),
+                )
         # Only configure replan buffering after load() so chunk_size is known.
         if replan_hz is not None and execute_hz is not None and hasattr(
             server, "configure_replan"
@@ -2765,6 +2898,10 @@ def create_app(
                     logger.warning(
                         "two_policy_runtime.stop failed: %s", exc,
                     )
+            try:
+                await _stop_shadow_worker(server)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("shadow_worker.stop failed: %s", exc)
             # Flush + close JSONL recorder if armed
             _rec = getattr(server, "_recorder", None)
             if _rec is not None:
@@ -3207,32 +3344,44 @@ def create_app(
                 except Exception as exc:  # noqa: BLE001 — RTC signal must not break /act
                     logger.warning("RTC adaptive signal update failed: %s", exc)
 
+            _rec = getattr(server, "_recorder", None)
             if isinstance(result, dict):
-                _shadow_for_record = await _run_shadow_policy_for_record(
-                    server,
-                    request,
-                    result,
+                _shadow_for_record = _shadow_routing_for_request(
+                    server, request, result
                 )
                 if _shadow_for_record is not None:
                     sampled = bool(_shadow_for_record.get("shadow_sampled"))
+                    queue = getattr(server, "_shadow_queue", None)
+                    if sampled and _rec is None:
+                        _shadow_for_record["shadow_sampled"] = False
+                        _shadow_for_record["shadow_skip_reason"] = "recording_disabled"
+                        sampled = False
+                    elif sampled and queue is None:
+                        _shadow_for_record["shadow_sampled"] = False
+                        _shadow_for_record["shadow_skip_reason"] = "shadow_queue_disabled"
+                        sampled = False
+                    elif sampled:
+                        _shadow_for_record["shadow_mode"] = "background"
+                        _shadow_for_record["shadow_pending"] = True
                     result["shadow_sampled"] = sampled
-                    if sampled and "shadow_latency_ms" in _shadow_for_record:
-                        result["shadow_latency_ms"] = _shadow_for_record[
-                            "shadow_latency_ms"
-                        ]
-                    if "shadow_error" in _shadow_for_record:
-                        result["shadow_error"] = _shadow_for_record["shadow_error"]
-                    span.set_attribute("tether.shadow.sampled", sampled)
-                    if "shadow_error" in _shadow_for_record:
-                        span.set_attribute(
-                            "tether.shadow.error",
-                            str(_shadow_for_record["shadow_error"])[:200],
+                    if sampled:
+                        result["shadow_mode"] = _shadow_for_record.get("shadow_mode")
+                        result["shadow_pending"] = bool(
+                            _shadow_for_record.get("shadow_pending")
                         )
+                    if _shadow_for_record.get("shadow_skip_reason"):
+                        result["shadow_skip_reason"] = _shadow_for_record[
+                            "shadow_skip_reason"
+                        ]
+                    span.set_attribute("tether.shadow.sampled", sampled)
+                    span.set_attribute(
+                        "tether.shadow.mode",
+                        str(_shadow_for_record.get("shadow_mode") or "skipped"),
+                    )
 
             # JSONL record hook (B.2). Writes inside the OTel span context
             # so the seq attribute below cross-links the two ledgers. Recorder
             # absent or degraded → no-op.
-            _rec = getattr(server, "_recorder", None)
             if _rec is not None and isinstance(result, dict):
                 actions = result.get("actions") or []
                 action_dim = (
@@ -3287,6 +3436,45 @@ def create_app(
                 )
                 if rec_seq >= 0:
                     span.set_attribute("tether.record.seq", rec_seq)
+                    if (
+                        _shadow_for_record is not None
+                        and _shadow_for_record.get("shadow_pending") is True
+                    ):
+                        queue = getattr(server, "_shadow_queue", None)
+                        request_snapshot = _snapshot_predict_request(request)
+                        if queue is None:
+                            queued_routing = dict(_shadow_for_record)
+                            queued_routing["shadow_pending"] = False
+                            queued_routing["shadow_error"] = "shadow_queue_disabled"
+                            _write_shadow_result_record(
+                                _rec,
+                                seq=rec_seq,
+                                request=request_snapshot,
+                                routing=queued_routing,
+                            )
+                        else:
+                            try:
+                                queue.put_nowait(
+                                    {
+                                        "seq": rec_seq,
+                                        "request": request_snapshot,
+                                        "routing": dict(_shadow_for_record),
+                                    }
+                                )
+                            except Exception as exc:  # noqa: BLE001
+                                queued_routing = dict(_shadow_for_record)
+                                queued_routing["shadow_pending"] = False
+                                queued_routing["shadow_error"] = (
+                                    "shadow_queue_full"
+                                    if type(exc).__name__ == "QueueFull"
+                                    else f"{type(exc).__name__}: {exc}"
+                                )
+                                _write_shadow_result_record(
+                                    _rec,
+                                    seq=rec_seq,
+                                    request=request_snapshot,
+                                    routing=queued_routing,
+                                )
 
             # Synthetic latency injection (B.4 A2C2 gate). Runs AFTER
             # JSONL recording so recorded latency_ms is the true compute

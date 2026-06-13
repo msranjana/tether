@@ -34,11 +34,19 @@ def _percentile(values: list[float], q: float) -> float:
     return vals[lo] + frac * (vals[hi] - vals[lo])
 
 
-def _load_trace(path: str | Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _load_trace(
+    path: str | Path,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[Any, dict[str, Any]]]:
     reader = load_reader(path)
     header = reader.read_header()
-    requests = [rec for kind, rec in reader.read_records() if kind == "request"]
-    return header, requests
+    requests: list[dict[str, Any]] = []
+    shadow_results: dict[Any, dict[str, Any]] = {}
+    for kind, rec in reader.read_records():
+        if kind == "request":
+            requests.append(rec)
+        elif kind == "shadow_result":
+            shadow_results[rec.get("seq")] = rec
+    return header, requests, shadow_results
 
 
 def _action_shape(actions: Any) -> dict[str, int]:
@@ -129,8 +137,39 @@ def _metadata_warnings(
     return warnings
 
 
-def _shadow_candidate_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def _shadow_candidate_record(
+    record: dict[str, Any],
+    shadow_result: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     routing = record.get("routing")
+    if not isinstance(routing, dict):
+        routing = {}
+    if shadow_result is not None:
+        response = (
+            shadow_result.get("response")
+            if isinstance(shadow_result.get("response"), dict)
+            else {}
+        )
+        shadow_actions = response.get("actions")
+        if not isinstance(shadow_actions, list):
+            return None
+        result_routing = (
+            shadow_result.get("routing")
+            if isinstance(shadow_result.get("routing"), dict)
+            else routing
+        )
+        return {
+            "kind": "request",
+            "seq": record.get("seq"),
+            "request": record.get("request") if isinstance(record.get("request"), dict) else {},
+            "response": {
+                "actions": shadow_actions,
+                **_action_shape(shadow_actions),
+            },
+            "latency": shadow_result.get("latency"),
+            "guard": result_routing.get("shadow_guard") if isinstance(result_routing.get("shadow_guard"), dict) else None,
+            "routing": result_routing,
+        }
     if not isinstance(routing, dict):
         return None
     shadow_actions = routing.get("shadow_actions")
@@ -154,7 +193,30 @@ def _shadow_candidate_record(record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _shadow_skip_record(record: dict[str, Any]) -> dict[str, Any] | None:
+def _shadow_skip_record(
+    record: dict[str, Any],
+    shadow_result: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if shadow_result is not None:
+        result_routing = (
+            shadow_result.get("routing")
+            if isinstance(shadow_result.get("routing"), dict)
+            else {}
+        )
+        if shadow_result.get("error") or result_routing.get("shadow_error"):
+            err = shadow_result.get("error")
+            message = (
+                err.get("message")
+                if isinstance(err, dict)
+                else result_routing.get("shadow_error")
+            )
+            return {
+                "seq": record.get("seq"),
+                "status": "shadow_error",
+                "passed": False,
+                "error": str(message or "")[:500],
+            }
+        return None
     routing = record.get("routing")
     if not isinstance(routing, dict):
         return None
@@ -171,6 +233,13 @@ def _shadow_skip_record(record: dict[str, Any]) -> dict[str, Any] | None:
             "status": "shadow_error",
             "passed": False,
             "error": str(routing.get("shadow_error"))[:500],
+        }
+    if routing.get("shadow_pending") is True:
+        return {
+            "seq": record.get("seq"),
+            "status": "shadow_pending",
+            "passed": False,
+            "reason": "shadow_result not recorded yet",
         }
     return None
 
@@ -248,30 +317,31 @@ def diff_policy_traces(
 
     Modes:
     - trace pair: compare request records by ``seq`` across two traces.
-    - shadow: compare ``response.actions`` against ``routing.shadow_actions`` in
-      one trace.
+    - shadow: compare ``response.actions`` against appended ``shadow_result``
+      rows, with legacy inline ``routing.shadow_actions`` still supported.
     """
     if not shadow and candidate_trace is None:
         raise PolicyDiffError("candidate_trace is required unless shadow=True")
 
-    base_header, base_requests = _load_trace(baseline_trace)
+    base_header, base_requests, shadow_results = _load_trace(baseline_trace)
     candidate_header: dict[str, Any] | None = None
     candidate_by_seq: dict[Any, dict[str, Any]] = {}
     if shadow:
         mode = "shadow_trace"
     else:
         mode = "trace_pair"
-        candidate_header, candidate_requests = _load_trace(candidate_trace or "")
+        candidate_header, candidate_requests, _ = _load_trace(candidate_trace or "")
         candidate_by_seq = {rec.get("seq"): rec for rec in candidate_requests}
 
     per_request: list[dict[str, Any]] = []
     for base in base_requests:
         if shadow:
-            shadow_skip = _shadow_skip_record(base)
+            shadow_result = shadow_results.get(base.get("seq"))
+            shadow_skip = _shadow_skip_record(base, shadow_result)
             if shadow_skip is not None:
                 per_request.append(shadow_skip)
                 continue
-            candidate = _shadow_candidate_record(base)
+            candidate = _shadow_candidate_record(base, shadow_result)
         else:
             candidate = candidate_by_seq.get(base.get("seq"))
         per_request.append(
@@ -315,6 +385,7 @@ def diff_policy_traces(
     missing = [row for row in per_request if row.get("status") == "missing_candidate"]
     shadow_skipped = [row for row in per_request if row.get("status") == "shadow_skipped"]
     shadow_errors = [row for row in per_request if row.get("status") == "shadow_error"]
+    shadow_pending = [row for row in per_request if row.get("status") == "shadow_pending"]
     verdict = "pass"
     if (
         not compared
@@ -324,6 +395,7 @@ def diff_policy_traces(
         or guard_regressions
         or missing
         or shadow_errors
+        or shadow_pending
     ):
         verdict = "fail"
     elif request_mismatches or _metadata_warnings(base_header, candidate_header):
@@ -347,7 +419,7 @@ def diff_policy_traces(
             "embodiment": base_header.get("embodiment"),
         },
         "candidate": (
-            {"source": "routing.shadow_actions"}
+            {"source": "shadow_result or routing.shadow_actions"}
             if shadow
             else {
                 "trace": str(candidate_trace),
@@ -364,6 +436,7 @@ def diff_policy_traces(
             "compared": len(compared),
             "shadow_skipped": len(shadow_skipped),
             "shadow_errors": len(shadow_errors),
+            "shadow_pending": len(shadow_pending),
             "missing_candidate": len(missing),
             "request_mismatches": len(request_mismatches),
             "action_failures": len(action_failures),
