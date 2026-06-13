@@ -37,6 +37,7 @@ _NOARGS_SUMMARY = """[bold]tether[/bold] — deploy any VLA model to any edge ha
 [bold cyan]Most-used:[/bold cyan]
   [green]tether chat[/green]                start the natural-language assistant
   [green]tether chat --tui[/green]          ↳ full-screen TUI (needs [dim]pip install 'tether\\[tui]'[/dim])
+  [green]tether prove ./export[/green]      prove a real export is deployable
   [green]tether go --model X[/green]        one-command deploy: probe → pull → export → serve
   [green]tether smoke[/green]               prove install + local /act roundtrip
   [green]tether doctor[/green]              diagnose install + GPU issues
@@ -71,7 +72,7 @@ def _skip_blocking_onboarding(ctx: typer.Context) -> bool:
     if os.environ.get("TETHER_SKIP_ONBOARDING", "").lower() in {"1", "true", "yes", "on"}:
         return True
     command = ctx.invoked_subcommand or (sys.argv[1] if len(sys.argv) > 1 else "")
-    return command in {"serve", "go", "ros2-serve", "smoke"}
+    return command in {"serve", "go", "ros2-serve", "smoke", "deploy-proof", "prove"}
 
 
 def _looks_like_pi05_model_ref(model: str) -> bool:
@@ -3383,6 +3384,183 @@ def smoke(
 
     if not receipt.get("passed"):
         raise typer.Exit(1)
+
+
+@app.command(name="deploy-proof", hidden=True)
+def deploy_proof(
+    export_dir: str = typer.Argument(
+        ...,
+        help="Path to the real exported model directory to prove.",
+    ),
+    output_dir: str = typer.Option(
+        "",
+        "--output-dir",
+        help="Directory for deployment-proof.json, Markdown, logs, and MANIFEST.",
+    ),
+    profile: str = typer.Option(
+        "",
+        "--profile",
+        help="Optional JSON/YAML deployment profile with pass/fail thresholds.",
+    ),
+    port: int = typer.Option(
+        0,
+        "--port",
+        help="Local server port. 0 picks a free localhost port.",
+    ),
+    offline: bool = typer.Option(
+        True,
+        "--offline/--online",
+        help="Run with TETHER_OFFLINE/HF offline flags enabled.",
+    ),
+    timeout_s: float = typer.Option(
+        30.0,
+        "--timeout-s",
+        help="Seconds to wait for /health, /act, /metrics, and auth probes.",
+    ),
+    samples: int = typer.Option(
+        20,
+        "--samples",
+        help="Number of authenticated /act roundtrips to measure.",
+    ),
+    device: str = typer.Option(
+        "cpu",
+        "--device",
+        help="Device passed to tether serve: cpu or cuda.",
+    ),
+    providers: str = typer.Option(
+        "",
+        "--providers",
+        help="Comma-separated ORT providers passed through to tether serve.",
+    ),
+    no_strict_providers: bool = typer.Option(
+        False,
+        "--no-strict-providers",
+        help="Allow serve provider fallback instead of failing loudly.",
+    ),
+    embodiment: str = typer.Option(
+        "custom",
+        "--embodiment",
+        help="Embodiment preset used for serve and guard stress checks.",
+    ),
+    custom_embodiment_config: str = typer.Option(
+        "",
+        "--custom-embodiment-config",
+        help="Custom embodiment config JSON passed through to tether serve.",
+    ),
+    safety_config: str = typer.Option(
+        "",
+        "--safety-config",
+        help="SafetyLimits JSON passed through to tether serve and guard stress.",
+    ),
+    api_key: str = typer.Option(
+        "",
+        "--api-key",
+        help="Start serve with API-key auth and prove protected endpoints reject unauthenticated calls.",
+    ),
+    deadline_ms: float = typer.Option(
+        0.0,
+        "--deadline-ms",
+        help="Per-request deadline passed through to tether serve. 0 disables.",
+    ),
+    max_concurrent: int = typer.Option(
+        0,
+        "--max-concurrent",
+        help="Max concurrent /act requests passed through to tether serve. 0 disables.",
+    ),
+    record_dir: str = typer.Option(
+        "",
+        "--record-dir",
+        help="Optional trace directory passed to tether serve --record.",
+    ),
+    record_images: str = typer.Option(
+        "hash_only",
+        "--record-images",
+        help="Trace image redaction policy: full, hash_only, or none.",
+    ),
+    prewarm: bool = typer.Option(
+        True,
+        "--prewarm/--no-prewarm",
+        help="Leave serve prewarm enabled so /health means ready.",
+    ),
+    instruction: str = typer.Option(
+        "reach",
+        "--instruction",
+        help="Instruction used for proof /act requests.",
+    ),
+    state_dim: int = typer.Option(
+        6,
+        "--state-dim",
+        help="Length of the zero state vector used for proof /act requests.",
+    ),
+    output_format: str = typer.Option(
+        "human",
+        "--format",
+        help="Output format: 'human', 'json', or 'markdown'.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Alias for --format json.",
+    ),
+):
+    """Produce a hashed deployment proof packet for a real export."""
+
+    if json_output:
+        output_format = "json"
+    if output_format not in ("human", "json", "markdown"):
+        err_console.print(
+            f"[red]--format must be 'human', 'json', or 'markdown', got {output_format!r}[/red]"
+        )
+        raise typer.Exit(2)
+    if samples < 1:
+        err_console.print("[red]--samples must be >= 1[/red]")
+        raise typer.Exit(2)
+
+    import tether.deploy_proof as proof_mod
+
+    try:
+        receipt = proof_mod.run_deploy_proof(
+            export_dir=export_dir,
+            output_dir=output_dir or None,
+            profile_path=profile or None,
+            offline=offline,
+            port=port,
+            timeout_s=timeout_s,
+            act_samples=samples,
+            device=device,
+            providers=providers,
+            no_strict_providers=no_strict_providers,
+            embodiment=embodiment,
+            custom_embodiment_config=custom_embodiment_config or None,
+            safety_config=safety_config or None,
+            api_key=api_key or None,
+            deadline_ms=deadline_ms,
+            max_concurrent=max_concurrent,
+            record_dir=record_dir or None,
+            record_images=record_images,
+            prewarm=prewarm,
+            instruction=instruction,
+            state_dim=state_dim,
+        )
+    except proof_mod.DeployProofError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
+
+    if output_format == "json":
+        typer.echo(json.dumps(receipt, indent=2))
+    elif output_format == "markdown":
+        typer.echo(proof_mod.format_deploy_proof_markdown(receipt))
+    else:
+        console.print(proof_mod.format_deploy_proof_human(receipt))
+
+    if not receipt.get("passed"):
+        raise typer.Exit(1)
+
+
+app.command(
+    name="prove",
+    help="Friendly alias for `deploy-proof`: prove a real export is ready to deploy.",
+)(deploy_proof)
 
 
 @app.command()

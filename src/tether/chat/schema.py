@@ -72,6 +72,26 @@ TOOLS: list[dict[str, Any]] = [
         },
     ),
     _tool(
+        "prove_deployment",
+        "Run `tether prove` on a real export to produce a local deployment proof packet. Use this when the user asks whether an export is safe, ready, deployable, production-ready, or suitable for a robot. This does not actuate hardware; it starts a local server, probes health/config/act/metrics, records optional traces, and writes proof artifacts.",
+        {
+            "properties": {
+                "export_dir": {"type": "string", "description": "Path to the export directory to prove"},
+                "embodiment": {"type": "string", "description": "Robot preset such as franka, so100, ur5, or custom. Default custom."},
+                "profile": {"type": "string", "description": "Optional JSON/YAML deployment profile with pass/fail thresholds"},
+                "output_dir": {"type": "string", "description": "Directory for proof artifacts"},
+                "record_dir": {"type": "string", "description": "Optional trace directory to pass as --record-dir"},
+                "safety_config": {"type": "string", "description": "Optional SafetyLimits JSON path"},
+                "device": {"type": "string", "enum": ["cpu", "cuda"], "description": "Runtime device. Default cpu for safe proof runs."},
+                "samples": {"type": "integer", "description": "Number of /act samples to measure. Default 20."},
+                "timeout_s": {"type": "integer", "description": "Timeout in seconds. Default 30."},
+                "offline": {"type": "boolean", "description": "Run in offline mode. Default true."},
+                "json": {"type": "boolean", "description": "Emit JSON instead of human output."},
+            },
+            "required": ["export_dir"],
+        },
+    ),
+    _tool(
         "benchmark",
         "Measure latency/throughput of an exported model on the local machine.",
         {

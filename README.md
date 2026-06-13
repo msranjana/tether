@@ -13,7 +13,7 @@
 
 **Verified parity across ALL four major open VLAs.** Tether's monolithic ONNX export matches the reference PyTorch policy to **cos = +1.000000** end-to-end on SmolVLA, pi0, pi0.5 (canonical 10-step flow-matching unrolled) and GR00T N1.6 (canonical 4-step DDIM loop external to the ONNX). Per-model first-action max_abs: SmolVLA 5.96e-07, pi0 2.09e-07, pi0.5 2.38e-07, GR00T 8.34e-07 — all at machine precision, shared seeded inputs. Full claim ledger in [reflex_context/measured_numbers.md](reflex_context/measured_numbers.md).
 
-One CLI, eleven verbs, plus a chat agent.
+One CLI, with chat as the front door and explicit commands underneath.
 
 ## Install
 
@@ -156,7 +156,7 @@ You're running tether 0.2.0. Supported targets:
 Want me to show which models support each target, or run tether doctor?
 ```
 
-Chat understands 16 tether commands (export, serve, bench, eval, distill, finetune, traces, doctor, etc.) and runs them as subprocess on your behalf. Powered by GPT-5 Mini through a proxy hosted at `chat.fastcrest.com` — free tier is 100 calls/day per machine, no signup, no API key.
+Chat wraps the real `tether` CLI tools (go, prove, serve, doctor, models, traces, eval, train, etc.) and runs them as subprocesses on your behalf. Ask for outcomes, not flags: "prove ./export is ready for franka", "deploy smolvla to my mac", or "why did my last /act fail?". Powered by GPT-5 Mini through a proxy hosted at `chat.fastcrest.com` — free tier is 100 calls/day per machine, no signup, no API key.
 
 > Bring your own key? `export FASTCREST_PROXY_URL=https://api.openai.com/v1`
 
@@ -257,7 +257,9 @@ with ReflexClient("http://localhost:8000", api_key=os.environ["TETHER_API_KEY"])
 ```
 tether chat             # NEW — natural-language interface to every command below
 tether go               # one-command-deploy: probe → resolve → pull → serve
+tether prove            # friendly deployment-proof alias for real export readiness
 tether serve            # explicit-config server (full flag surface)
+tether deploy-proof     # explicit backend command used by tether prove
 tether doctor           # diagnose env + GPU + per-deploy issues
 tether models {list, pull, info, export}    # curated registry + lifecycle
 tether train  {finetune, distill}           # training operations
@@ -268,9 +270,9 @@ tether pro     {activate, status, deactivate}   # Pro tier license
 tether contribute  {opt-in, opt-out, status}    # Curate data contribution
 ```
 
-11 visible verbs. 8 advanced/SO-100/internal commands stay callable directly (config, calibrate, bench-game, status, inspect bench/targets/guard/doctor) but hidden from `--help` to reduce cognitive load. Power-users can still invoke them; they just don't crowd the discovery surface.
+Advanced/SO-100/internal commands stay callable directly (config, calibrate, bench-game, status, inspect bench/targets/guard/doctor) but stay out of the first-run path. Power-users can still invoke them; they just don't crowd the discovery story.
 
-Hidden legacy commands (`export`, `bench`, `replay`, etc.) stay callable as alias bridges.
+Hidden legacy commands (`export`, `bench`, `replay`, etc.) stay callable as alias bridges. For new users, start with `tether chat`; for CI and repeatable evidence, use `tether prove ./export`.
 
 ### Install notes
 
@@ -352,6 +354,37 @@ passed                   PASS
 ```
 
 Exit codes: `0` pass, `1` fail (any fixture above threshold), `2` error (missing ONNX, bad config). Pipe `--output-json` for CI consumption, or run `tether validate --init-ci` to scaffold a GitHub Actions workflow at `.github/workflows/tether-validate.yml`.
+
+### Deployment proof packet
+
+`tether prove ./p0` turns a real export into a local acceptance packet. `tether deploy-proof` is the explicit backend command and remains supported for scripts:
+doctor diagnostics, `/health`, authenticated `/act` samples, TTFA, p50/p95/p99,
+jitter, control-budget misses, API-key boundary checks, `/metrics` scrape,
+optional trace recording, ActionGuard stress checks, export file hashes, and a
+hashed `MANIFEST.json`.
+
+```bash
+tether prove ./p0 \
+  --embodiment franka \
+  --api-key "$TETHER_API_KEY" \
+  --record-dir /tmp/tether-proof-traces \
+  --profile production.yml \
+  --samples 100 \
+  --output-dir /tmp/tether-deploy-proof
+```
+
+Profiles are JSON/YAML and override default thresholds:
+
+```yaml
+name: production
+thresholds:
+  require_auth: true
+  require_record_trace: true
+  require_guard: true
+  control_hz: 20
+  max_warm_roundtrip_p95_ms: 40
+  max_missed_control_budget: 0
+```
 
 ## Composable wedges
 

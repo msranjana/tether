@@ -7,7 +7,6 @@ goes back to the LLM as the tool result.
 
 from __future__ import annotations
 
-import json
 import shlex
 import shutil
 import subprocess
@@ -67,6 +66,23 @@ def _build_serve(p: dict[str, Any]) -> list[str]:
     args = ["serve", str(p["export_dir"])]
     _flag(args, "port", p.get("port"))
     _flag(args, "host", p.get("host"))
+    return args
+
+
+def _build_prove(p: dict[str, Any]) -> list[str]:
+    args = ["prove", str(p["export_dir"])]
+    _flag(args, "embodiment", p.get("embodiment"))
+    _flag(args, "profile", p.get("profile"))
+    _flag(args, "output-dir", p.get("output_dir"))
+    _flag(args, "record-dir", p.get("record_dir"))
+    _flag(args, "safety-config", p.get("safety_config"))
+    _flag(args, "device", p.get("device"))
+    _flag(args, "samples", p.get("samples"))
+    _flag(args, "timeout-s", p.get("timeout_s"))
+    if p.get("offline") is False:
+        args.append("--online")
+    if p.get("json") is True:
+        args.append("--json")
     return args
 
 
@@ -140,6 +156,7 @@ _BUILDERS = {
     "deploy_one_command": _build_go,
     "export_model": _build_export,
     "serve_model": _build_serve,
+    "prove_deployment": _build_prove,
     "benchmark": _build_bench,
     "evaluate": _build_eval,
     "list_models": _build_list_models,

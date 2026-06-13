@@ -89,6 +89,31 @@ jobs:
           assert body["latency"]["warm_roundtrip_ms"]["p95_ms"] > 0, body
           PY
 
+          TETHER_SKIP_ONBOARDING=1 TETHER_NO_UPGRADE_CHECK=1 TETHER_OFFLINE=1 \
+          TETHER_HOME=/tmp/tether-serve-home \
+            /tmp/tether-serve-smoke/bin/tether deploy-proof /tmp/tether-package-smoke-export \
+              --offline \
+              --json \
+              --device cpu \
+              --api-key ci-secret \
+              --record-dir /tmp/tether-deploy-proof-traces \
+              --samples 3 \
+              --timeout-s 45 \
+              --output-dir /tmp/tether-deploy-proof-run \
+            | tee /tmp/tether-deploy-proof.json
+
+          /tmp/tether-serve-smoke/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          body = json.loads(Path("/tmp/tether-deploy-proof.json").read_text())
+          assert body["passed"] is True, body
+          assert body["security"]["enabled"] is True, body
+          assert body["latency"]["samples"] == 3, body
+          assert body["metrics"]["metric_names"], body
+          assert body["trace"]["files"], body
+          assert Path("/tmp/tether-deploy-proof-run/MANIFEST.json").exists(), body
+          PY
+
       - name: Assemble deploy proof packet
         if: always()
         shell: bash
@@ -105,12 +130,17 @@ jobs:
             /tmp/tether-go-dry-run.txt \
             /tmp/tether-base-serve.txt \
             /tmp/tether-smoke.json \
-            /tmp/tether-smoke.md
+            /tmp/tether-smoke.md \
+            /tmp/tether-deploy-proof.json
           do
             if [ -f "$file" ]; then
               cp "$file" "$PROOF_DIR/"
             fi
           done
+          if [ -d /tmp/tether-deploy-proof-run ]; then
+            mkdir -p "$PROOF_DIR/deployment-proof"
+            cp -R /tmp/tether-deploy-proof-run/. "$PROOF_DIR/deployment-proof/"
+          fi
           cp dist/fastcrest_tether-* "$PROOF_DIR/" 2>/dev/null || true
 
           python - <<'PY'
@@ -120,12 +150,12 @@ jobs:
 
           root = Path("/tmp/tether-deploy-proof")
           files = []
-          for path in sorted(root.iterdir()):
-              if not path.is_file() or path.name == "MANIFEST.json":
+          for path in sorted(p for p in root.rglob("*") if p.is_file()):
+              if path.name == "MANIFEST.json":
                   continue
               data = path.read_bytes()
               files.append({
-                  "name": path.name,
+                  "name": path.relative_to(root).as_posix(),
                   "size_bytes": len(data),
                   "sha256": hashlib.sha256(data).hexdigest(),
               })

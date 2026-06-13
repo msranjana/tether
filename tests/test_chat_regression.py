@@ -54,6 +54,31 @@ def test_list_models_executor_emits_json_and_filters() -> None:
     ]
 
 
+def test_prove_deployment_tool_routes_to_friendly_alias() -> None:
+    tool = by_name()["prove_deployment"]
+    props = tool["function"]["parameters"]["properties"]
+    assert "export_dir" in props
+    assert "embodiment" in props
+
+    argv = _argv_for(
+        "prove_deployment",
+        {
+            "export_dir": "./export",
+            "embodiment": "franka",
+            "record_dir": "./traces",
+            "samples": 5,
+            "json": True,
+        },
+    )
+    assert argv == [
+        "prove", "./export",
+        "--embodiment", "franka",
+        "--record-dir", "./traces",
+        "--samples", "5",
+        "--json",
+    ]
+
+
 def test_system_prompt_has_registry_grounding_rule() -> None:
     p = SYSTEM_PROMPT
     assert "registry grounding" in p.lower(), (
@@ -66,3 +91,10 @@ def test_system_prompt_has_registry_grounding_rule() -> None:
     assert "I don't have that data in the registry" in p, (
         "Grounding rule must give the agent an explicit graceful-unknown phrase"
     )
+
+
+def test_system_prompt_prefers_prove_for_deployment_readiness() -> None:
+    p = SYSTEM_PROMPT
+    assert "prove_deployment" in p
+    assert "safe, ready, deployable, production-ready" in p
+    assert "does not actuate hardware" in p

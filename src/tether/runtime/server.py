@@ -3017,7 +3017,7 @@ def create_app(
         return JSONResponse(content=cfg)
 
     @app.get("/guard/status")
-    async def guard_status():
+    async def guard_status(_auth: None = Depends(_require_api_key)):
         g = getattr(server, "_action_guard", None)
         if g is None:
             return JSONResponse(content={"enabled": False})
@@ -3031,7 +3031,7 @@ def create_app(
         })
 
     @app.post("/guard/reset")
-    async def guard_reset():
+    async def guard_reset(_auth: None = Depends(_require_api_key)):
         g = getattr(server, "_action_guard", None)
         if g is None:
             return JSONResponse(

@@ -1,22 +1,28 @@
 # Tether CLI Command Reference
 
-Complete reference for every visible `tether` command in v0.9.x. The exhaustive flag list for any command is always one keystroke away — run `tether <command> --help` for the live, source-of-truth list. This document covers the surface most users actually touch plus worked examples per vertical.
+Complete reference for the main `tether` command surface. The exhaustive flag
+list for any command is always one keystroke away — run `tether <command>
+--help` for the live, source-of-truth list. This document covers the surface
+most users actually touch plus worked examples per vertical.
 
 ---
 
-## Quick orientation — 16 visible verbs
+## Quick orientation — chat first, CLI underneath
 
-After the verify and comply promotions, `tether --help` shows these 16 top-level verbs. Each is described in its own section below.
+Most users should start with `tether chat` and ask for the outcome they want.
+The assistant routes to the same CLI commands listed here, so scripted and
+manual workflows stay stable.
 
 | Verb | Purpose |
 |---|---|
+| [`chat`](#tether-chat) | Natural-language agent that runs tether commands for you |
+| [`prove`](#tether-prove) | Friendly deployment-proof alias for real export readiness |
 | [`go`](#tether-go) | One-command deploy: probe hardware → pick model → pull → export → serve |
 | [`serve`](#tether-serve) | Start an inference server from an exported model directory |
 | [`doctor`](#tether-doctor) | Diagnose install + GPU issues + per-deploy traps |
 | [`eval`](#tether-eval) | Task-success eval (LIBERO success rate + per-task numbers + optional video) |
 | [`verify`](#tether-verify) | Action-parity gate that writes `PARITY.md` + `parity.cert.json` |
 | [`comply`](#tether-comply) | Export EU conformity evidence bundles, SBOMs, gap reports, and trust docs |
-| [`chat`](#tether-chat) | Natural-language agent that runs tether commands for you |
 | [`models`](#tether-models) | Browse + download Tether-compatible VLA models from HuggingFace |
 | [`train`](#tether-train) | Finetune checkpoints, distill teachers into 1-NFE students |
 | [`validate`](#tether-validate) | Pre-flight validation — datasets before training, exports before serving |
@@ -59,6 +65,21 @@ tether go --model pi05-libero --dry-run
 | `--dry-run` | `false` | Probe + resolve + print plan; do not pull or serve |
 
 Full flag list: `tether go --help`. Note: models that ship as raw PyTorch require the `[monolithic]` extra (`pip install 'fastcrest-tether[monolithic]'`) for the inline export step.
+
+---
+
+## `tether prove`
+
+Friendly deployment-readiness command. It runs the `deploy-proof` backend to
+start a local server, probe health/config/act/metrics, optionally record traces,
+stress safety config, hash export artifacts, and write a proof packet.
+
+```bash
+tether prove ./tether_export --embodiment franka --record-dir ./traces
+```
+
+Use `tether deploy-proof` directly in older scripts; both commands are
+supported. Full flag list: `tether prove --help`.
 
 ---
 
@@ -231,6 +252,14 @@ Natural-language agent that wraps the rest of the CLI. Talk to your robot fleet 
 
 ```bash
 tether chat
+```
+
+Example prompts:
+
+```text
+prove ./export is ready for franka without touching hardware
+deploy smolvla to my mac
+why did my last /act fail?
 ```
 
 Full flag list: `tether chat --help`.

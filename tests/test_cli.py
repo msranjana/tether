@@ -124,6 +124,20 @@ def test_smoke_help():
     assert "/act" in result.output
 
 
+def test_deploy_proof_help():
+    result = runner.invoke(app, ["deploy-proof", "--help"])
+    assert result.exit_code == 0
+    assert "deployment proof" in result.output.lower()
+    assert "--profile" in result.output
+
+
+def test_prove_help_alias():
+    result = runner.invoke(app, ["prove", "--help"])
+    assert result.exit_code == 0
+    assert "ready to deploy" in result.output.lower()
+    assert "--profile" in result.output
+
+
 def test_smoke_json_uses_receipt_runner(tmp_path, monkeypatch):
     import tether.smoke as smoke_mod
 
@@ -195,6 +209,144 @@ def test_smoke_json_uses_receipt_runner(tmp_path, monkeypatch):
     assert "- Warm roundtrip p95: 2.0 ms" in markdown_path.read_text()
 
 
+def test_deploy_proof_json_uses_receipt_runner(tmp_path, monkeypatch):
+    import tether.deploy_proof as proof_mod
+
+    seen = {}
+
+    def fake_run_deploy_proof(**kwargs):
+        seen.update(kwargs)
+        return {
+            "schema_version": 1,
+            "kind": "tether.deployment_proof",
+            "passed": True,
+            "output_dir": str(tmp_path / "proof"),
+            "export_dir": kwargs["export_dir"],
+            "checks": [{"status": "pass"}],
+            "doctor": {"summary": {"pass": 1, "fail": 0, "warn": 0, "skip": 0}},
+            "latency": {
+                "samples": kwargs["act_samples"],
+                "ttfa_ms": 1.0,
+                "roundtrip_ms": {"p50_ms": 1.0, "p95_ms": 1.0, "p99_ms": 1.0},
+                "warm_roundtrip_ms": {"p95_ms": 1.0},
+                "jitter": {"p95_minus_p50_ms": 0.0},
+            },
+            "server": {"url": "http://127.0.0.1:12345"},
+            "security": {"enabled": True, "checks": []},
+            "metrics": {"status_code": 200, "metric_names": ["tether_act_latency_seconds"]},
+            "trace": {"record_dir": "", "files": []},
+        }
+
+    monkeypatch.setattr(proof_mod, "run_deploy_proof", fake_run_deploy_proof)
+
+    result = runner.invoke(
+        app,
+        [
+            "deploy-proof",
+            str(tmp_path / "export"),
+            "--json",
+            "--output-dir",
+            str(tmp_path / "proof"),
+            "--profile",
+            str(tmp_path / "profile.yml"),
+            "--port",
+            "12345",
+            "--timeout-s",
+            "2",
+            "--samples",
+            "7",
+            "--device",
+            "cuda",
+            "--providers",
+            "CUDAExecutionProvider,CPUExecutionProvider",
+            "--no-strict-providers",
+            "--embodiment",
+            "franka",
+            "--api-key",
+            "secret",
+            "--record-dir",
+            str(tmp_path / "traces"),
+            "--record-images",
+            "none",
+            "--no-prewarm",
+            "--instruction",
+            "pick",
+            "--state-dim",
+            "9",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)
+    assert body["passed"] is True
+    assert seen["export_dir"] == str(tmp_path / "export")
+    assert seen["output_dir"] == str(tmp_path / "proof")
+    assert seen["profile_path"] == str(tmp_path / "profile.yml")
+    assert seen["port"] == 12345
+    assert seen["timeout_s"] == 2.0
+    assert seen["act_samples"] == 7
+    assert seen["device"] == "cuda"
+    assert seen["providers"] == "CUDAExecutionProvider,CPUExecutionProvider"
+    assert seen["no_strict_providers"] is True
+    assert seen["embodiment"] == "franka"
+    assert seen["api_key"] == "secret"
+    assert seen["record_dir"] == str(tmp_path / "traces")
+    assert seen["record_images"] == "none"
+    assert seen["prewarm"] is False
+    assert seen["instruction"] == "pick"
+    assert seen["state_dim"] == 9
+
+
+def test_prove_alias_uses_deploy_proof_runner(tmp_path, monkeypatch):
+    import tether.deploy_proof as proof_mod
+
+    seen = {}
+
+    def fake_run_deploy_proof(**kwargs):
+        seen.update(kwargs)
+        return {
+            "schema_version": 1,
+            "kind": "tether.deployment_proof",
+            "passed": True,
+            "output_dir": str(tmp_path / "proof"),
+            "export_dir": kwargs["export_dir"],
+            "checks": [{"status": "pass"}],
+            "doctor": {"summary": {"pass": 1, "fail": 0, "warn": 0, "skip": 0}},
+            "latency": {
+                "samples": kwargs["act_samples"],
+                "ttfa_ms": 1.0,
+                "roundtrip_ms": {"p50_ms": 1.0, "p95_ms": 1.0, "p99_ms": 1.0},
+                "warm_roundtrip_ms": {"p95_ms": 1.0},
+                "jitter": {"p95_minus_p50_ms": 0.0},
+            },
+            "server": {"url": "http://127.0.0.1:12345"},
+            "security": {"enabled": False, "checks": []},
+            "metrics": {"status_code": 200, "metric_names": ["tether_act_latency_seconds"]},
+            "trace": {"record_dir": "", "files": []},
+        }
+
+    monkeypatch.setattr(proof_mod, "run_deploy_proof", fake_run_deploy_proof)
+
+    result = runner.invoke(
+        app,
+        [
+            "prove",
+            str(tmp_path / "export"),
+            "--json",
+            "--samples",
+            "3",
+            "--embodiment",
+            "franka",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["passed"] is True
+    assert seen["export_dir"] == str(tmp_path / "export")
+    assert seen["act_samples"] == 3
+    assert seen["embodiment"] == "franka"
+
+
 def test_smoke_failure_exits_nonzero(monkeypatch):
     import tether.smoke as smoke_mod
 
@@ -215,6 +367,29 @@ def test_smoke_failure_exits_nonzero(monkeypatch):
     body = json.loads(result.output)
     assert body["passed"] is False
     assert "server did not start" in body["error"]
+
+
+def test_deploy_proof_failure_exits_nonzero(monkeypatch, tmp_path):
+    import tether.deploy_proof as proof_mod
+
+    monkeypatch.setattr(
+        proof_mod,
+        "run_deploy_proof",
+        lambda **_: {
+            "schema_version": 1,
+            "kind": "tether.deployment_proof",
+            "passed": False,
+            "error": "DeployProofError: p95 over budget",
+            "checks": [{"status": "fail"}],
+        },
+    )
+
+    result = runner.invoke(app, ["deploy-proof", str(tmp_path / "export"), "--json"])
+
+    assert result.exit_code == 1
+    body = json.loads(result.output)
+    assert body["passed"] is False
+    assert "p95 over budget" in body["error"]
 
 
 def test_serve_missing_dir():
@@ -258,4 +433,6 @@ def test_deploy_commands_skip_blocking_onboarding():
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="serve")) is True
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="go")) is True
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="smoke")) is True
+    assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="deploy-proof")) is True
+    assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="prove")) is True
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="doctor")) is False

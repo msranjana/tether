@@ -13,6 +13,7 @@ WELCOME_CARD = """[bold]tether chat[/bold] — natural language for VLA deployme
 
 What I can do for you:
   • Deploy a model       [dim]"deploy smolvla to my mac"[/dim]
+  • Prove an export      [dim]"prove ./export is ready for franka"[/dim]
   • Browse models        [dim]"what models are available?"[/dim]
   • Diagnose problems    [dim]"why is my install broken?"[/dim]
   • Inspect traces       [dim]"show my recent traces from this week"[/dim]
@@ -31,9 +32,9 @@ SHORT_BANNER = """[bold]tether chat[/bold] — type a question, [green]/help[/gr
 TOUR_PROMPTS = [
     'what version of tether am i on?',
     'what models can i deploy and which is smallest?',
+    'prove ./export is ready for franka without touching hardware',
     'check my install for problems',
     "i'm on a mac with no gpu — what can i actually do?",
-    'show me my recent traces',
 ]
 
 
@@ -48,8 +49,8 @@ SLASH_HELP = """[bold]Slash commands[/bold]
   [green]exit[/green]       quit
 
 [bold]What chat can do[/bold]
-  Natural-language prompts route to one of 17 tools that wrap the [cyan]tether[/cyan] CLI.
-  Examples: "deploy smolvla to my mac", "show running serve processes",
+  Natural-language prompts route to tools that wrap the [cyan]tether[/cyan] CLI.
+  Examples: "deploy smolvla to my mac", "prove ./export is ready for franka",
   "list traces from yesterday", "benchmark pi05 on my desktop".
 
 [bold]Conversation persistence[/bold]
@@ -61,9 +62,9 @@ TOUR_BLOCK = """[bold]Try one of these[/bold] — copy-paste any line:
 
   what version of tether am i on?
   what models can i deploy and which is smallest?
+  prove ./export is ready for franka without touching hardware
   check my install for problems
   i'm on a mac with no gpu — what can i actually do?
-  show me my recent traces
 
 [dim]Tip: the assistant can also chain operations — try "deploy smolvla to my orin nano".[/dim]
 """
@@ -100,6 +101,7 @@ def tools_listing() -> str:
         "deploy_one_command": "Deploy",
         "export_model": "Deploy",
         "serve_model": "Deploy",
+        "prove_deployment": "Deploy",
         "list_models": "Models",
         "pull_model": "Models",
         "model_info": "Models",
