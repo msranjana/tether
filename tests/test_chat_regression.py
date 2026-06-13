@@ -66,6 +66,9 @@ def test_prove_deployment_tool_routes_to_friendly_alias() -> None:
             "export_dir": "./export",
             "embodiment": "franka",
             "record_dir": "./traces",
+            "policy_diff_baseline": "./traces/current.jsonl.gz",
+            "policy_diff_candidate": "./traces/candidate.jsonl.gz",
+            "policy_diff_fail_on": "any",
             "samples": 5,
             "json": True,
         },
@@ -74,9 +77,45 @@ def test_prove_deployment_tool_routes_to_friendly_alias() -> None:
         "prove", "./export",
         "--embodiment", "franka",
         "--record-dir", "./traces",
+        "--policy-diff-baseline", "./traces/current.jsonl.gz",
+        "--policy-diff-candidate", "./traces/candidate.jsonl.gz",
+        "--policy-diff-fail-on", "any",
         "--samples", "5",
         "--json",
     ]
+
+
+def test_diff_policies_tool_routes_to_policy_diff() -> None:
+    tool = by_name()["diff_policies"]
+    props = tool["function"]["parameters"]["properties"]
+    assert "baseline_trace" in props
+    assert "candidate_trace" in props
+    assert "shadow" in props
+
+    argv = _argv_for(
+        "diff_policies",
+        {
+            "baseline_trace": "./base.jsonl.gz",
+            "candidate_trace": "./cand.jsonl.gz",
+            "max_action_delta": 0.05,
+            "json": True,
+        },
+    )
+    assert argv == [
+        "policy", "diff", "./base.jsonl.gz", "./cand.jsonl.gz",
+        "--max-action-delta", "0.05",
+        "--json",
+    ]
+
+    shadow_argv = _argv_for(
+        "diff_policies",
+        {
+            "baseline_trace": "./shadow.jsonl.gz",
+            "candidate_trace": "./ignored.jsonl.gz",
+            "shadow": True,
+        },
+    )
+    assert shadow_argv == ["policy", "diff", "./shadow.jsonl.gz", "--shadow"]
 
 
 def test_system_prompt_has_registry_grounding_rule() -> None:
@@ -97,4 +136,11 @@ def test_system_prompt_prefers_prove_for_deployment_readiness() -> None:
     p = SYSTEM_PROMPT
     assert "prove_deployment" in p
     assert "safe, ready, deployable, production-ready" in p
+    assert "policy_diff_*" in p
     assert "does not actuate hardware" in p
+
+
+def test_system_prompt_prefers_policy_diff_for_rollout_questions() -> None:
+    p = SYSTEM_PROMPT
+    assert "diff_policies" in p
+    assert "safe to promote" in p

@@ -50,6 +50,8 @@ DEFAULT_PROFILE: dict[str, Any] = {
         "require_metrics": True,
         "require_auth": False,
         "require_record_trace": "auto",
+        "require_policy_diff": False,
+        "policy_diff_fail_on": "any",
         "require_guard": False,
         "max_deadline_misses": None,
         "max_first_roundtrip_ms": None,
@@ -446,6 +448,125 @@ def _trace_files(record_dir: str | Path | None) -> list[dict[str, Any]]:
     return files
 
 
+def _normalize_policy_diff_fail_on(value: str | None) -> str:
+    fail_on = (value or "any").strip().lower()
+    valid = {"none", "actions", "latency", "guard", "shape", "any"}
+    if fail_on not in valid:
+        raise DeployProofError(
+            f"policy_diff_fail_on must be one of {sorted(valid)}, got {value!r}"
+        )
+    return fail_on
+
+
+def _run_policy_diff_evidence(
+    *,
+    baseline_trace: str | Path | None,
+    candidate_trace: str | Path | None,
+    shadow: bool,
+    fail_on: str,
+    min_action_cos: float,
+    max_action_delta: float,
+    max_latency_regression_pct: float,
+) -> dict[str, Any]:
+    checks: list[dict[str, Any]] = []
+    if not baseline_trace:
+        return {
+            "enabled": False,
+            "baseline_trace": "",
+            "candidate_trace": "",
+            "shadow": bool(shadow),
+            "fail_on": fail_on,
+            "report_artifact": "",
+            "report": None,
+            "error": None,
+            "checks": checks,
+        }
+
+    evidence = {
+        "enabled": True,
+        "baseline_trace": str(Path(baseline_trace).expanduser()),
+        "candidate_trace": str(Path(candidate_trace).expanduser()) if candidate_trace else "",
+        "shadow": bool(shadow),
+        "fail_on": fail_on,
+        "report_artifact": "",
+        "report": None,
+        "error": None,
+        "checks": checks,
+    }
+
+    if shadow and candidate_trace:
+        evidence["error"] = "candidate_trace is not allowed when shadow=True"
+        _add_check(
+            checks,
+            "policy_diff_inputs_valid",
+            False,
+            category="promotion",
+            expected="shadow trace only",
+            actual=evidence["error"],
+            remediation="Remove --policy-diff-candidate or disable --policy-diff-shadow.",
+        )
+        return evidence
+    if not shadow and not candidate_trace:
+        evidence["error"] = "candidate_trace is required unless shadow=True"
+        _add_check(
+            checks,
+            "policy_diff_inputs_valid",
+            False,
+            category="promotion",
+            expected="baseline and candidate traces",
+            actual=evidence["error"],
+            remediation="Pass --policy-diff-candidate or use --policy-diff-shadow.",
+        )
+        return evidence
+
+    try:
+        from tether.policy_diff import diff_policy_traces, should_fail
+
+        report = diff_policy_traces(
+            baseline_trace=baseline_trace,
+            candidate_trace=candidate_trace,
+            shadow=shadow,
+            min_action_cos=min_action_cos,
+            max_action_delta=max_action_delta,
+            max_latency_regression_pct=max_latency_regression_pct,
+        )
+        evidence["report"] = report
+        evidence["report_artifact"] = "policy-diff.json"
+        _add_check(
+            checks,
+            "policy_diff_runs",
+            True,
+            category="promotion",
+            expected="policy diff report generated",
+            actual={
+                "mode": report.get("mode"),
+                "verdict": (report.get("summary") or {}).get("verdict"),
+            },
+        )
+        gate_failed = should_fail(report, fail_on)  # type: ignore[arg-type]
+        _add_check(
+            checks,
+            "policy_diff_gate",
+            not gate_failed,
+            category="promotion",
+            expected=f"no {fail_on} policy diff failures",
+            actual=report.get("summary"),
+            remediation="Inspect policy-diff.json before promoting the candidate policy.",
+        )
+    except Exception as exc:  # noqa: BLE001
+        evidence["error"] = f"{type(exc).__name__}: {exc}"
+        _add_check(
+            checks,
+            "policy_diff_runs",
+            False,
+            category="promotion",
+            expected="policy diff report generated",
+            actual=evidence["error"],
+            remediation="Verify trace paths and run `tether policy diff` directly for details.",
+        )
+    return evidence
+
+
 def _run_guard_stress(
     *,
     safety_config: str | None,
@@ -568,6 +689,7 @@ def _evaluate_thresholds(
     record_trace_files: list[dict[str, Any]],
     record_dir: str | None,
     guard_stress: dict[str, Any],
+    policy_diff: dict[str, Any] | None,
 ) -> None:
     doctor_fails = int(((doctor or {}).get("summary") or {}).get("fail", 0))
     max_doctor = _threshold(profile, "max_doctor_failures")
@@ -648,6 +770,23 @@ def _evaluate_thresholds(
             remediation="Run with --record-dir and verify the recorder can write to that path.",
         )
 
+    if _threshold(profile, "require_policy_diff"):
+        policy_diff_ok = bool((policy_diff or {}).get("enabled")) and bool(
+            (policy_diff or {}).get("report")
+        )
+        _add_check(
+            checks,
+            "policy_diff_required",
+            policy_diff_ok,
+            category="promotion",
+            expected="policy diff report present",
+            actual={
+                "enabled": bool((policy_diff or {}).get("enabled")),
+                "error": (policy_diff or {}).get("error"),
+            },
+            remediation="Pass --policy-diff-baseline plus --policy-diff-candidate or --policy-diff-shadow.",
+        )
+
     if _threshold(profile, "require_guard"):
         guard_ok = bool(guard_stress.get("enabled")) and all(
             check["status"] == "pass" for check in guard_stress.get("checks", [])
@@ -686,6 +825,13 @@ def run_deploy_proof(
     prewarm: bool = True,
     instruction: str = "reach",
     state_dim: int = 6,
+    policy_diff_baseline_trace: str | Path | None = None,
+    policy_diff_candidate_trace: str | Path | None = None,
+    policy_diff_shadow: bool = False,
+    policy_diff_fail_on: str | None = None,
+    policy_diff_min_action_cos: float = 0.995,
+    policy_diff_max_action_delta: float = 0.10,
+    policy_diff_max_latency_regression_pct: float = 0.10,
     python_executable: str | None = None,
 ) -> dict[str, Any]:
     """Run a real-export deployment proof and optionally write a packet."""
@@ -741,6 +887,7 @@ def run_deploy_proof(
         "metrics": None,
         "safety_stress": None,
         "trace": None,
+        "policy_diff": None,
         "act": None,
         "act_samples": [],
         "latency": None,
@@ -928,6 +1075,22 @@ def run_deploy_proof(
             "files": trace_files,
         }
 
+        resolved_policy_diff_fail_on = _normalize_policy_diff_fail_on(
+            policy_diff_fail_on
+            or str(_threshold(profile, "policy_diff_fail_on") or "any")
+        )
+        policy_diff = _run_policy_diff_evidence(
+            baseline_trace=policy_diff_baseline_trace,
+            candidate_trace=policy_diff_candidate_trace,
+            shadow=policy_diff_shadow,
+            fail_on=resolved_policy_diff_fail_on,
+            min_action_cos=policy_diff_min_action_cos,
+            max_action_delta=policy_diff_max_action_delta,
+            max_latency_regression_pct=policy_diff_max_latency_regression_pct,
+        )
+        receipt["policy_diff"] = policy_diff
+        checks.extend(policy_diff.get("checks") or [])
+
         _evaluate_thresholds(
             checks=checks,
             profile=profile,
@@ -937,6 +1100,7 @@ def run_deploy_proof(
             record_trace_files=trace_files,
             record_dir=str(record_dir) if record_dir else None,
             guard_stress=guard_stress,
+            policy_diff=policy_diff,
         )
     except Exception as exc:  # noqa: BLE001
         receipt["error"] = f"{type(exc).__name__}: {exc}"
@@ -981,6 +1145,11 @@ def write_deploy_proof_packet(receipt: dict[str, Any], output_dir: str | Path) -
     (out / "export-manifest.json").write_text(
         json.dumps(receipt.get("export_manifest") or {}, indent=2, sort_keys=True) + "\n"
     )
+    policy_diff = receipt.get("policy_diff") or {}
+    if policy_diff.get("report"):
+        (out / "policy-diff.json").write_text(
+            json.dumps(policy_diff["report"], indent=2, sort_keys=True) + "\n"
+        )
 
     files = []
     for path in sorted(p for p in out.iterdir() if p.is_file() and p.name != "MANIFEST.json"):
@@ -1058,6 +1227,18 @@ def format_deploy_proof_human(receipt: dict[str, Any]) -> str:
     trace = receipt.get("trace") or {}
     if trace.get("record_dir"):
         lines.append(f"traces:  {len(trace.get('files') or [])} file(s) in {trace.get('record_dir')}")
+    policy_diff = receipt.get("policy_diff") or {}
+    if policy_diff.get("enabled"):
+        report = policy_diff.get("report") or {}
+        summary = report.get("summary") or {}
+        if summary:
+            lines.append(
+                "policy diff: "
+                f"{str(summary.get('verdict', 'unknown')).upper()} "
+                f"(compared={summary.get('compared', 0)}, fail_on={policy_diff.get('fail_on')})"
+            )
+        else:
+            lines.append(f"policy diff: ERROR ({policy_diff.get('error')})")
     if receipt.get("error"):
         lines.append(f"error:   {receipt['error']}")
     return "\n".join(lines)
@@ -1075,6 +1256,9 @@ def format_deploy_proof_markdown(receipt: dict[str, Any]) -> str:
     security = receipt.get("security") or {}
     metrics = receipt.get("metrics") or {}
     trace = receipt.get("trace") or {}
+    policy_diff = receipt.get("policy_diff") or {}
+    policy_report = policy_diff.get("report") or {}
+    policy_summary = policy_report.get("summary") or {}
 
     lines = [
         "# Tether Deployment Proof",
@@ -1125,7 +1309,17 @@ def format_deploy_proof_markdown(receipt: dict[str, Any]) -> str:
         "",
         f"- Record dir: `{trace.get('record_dir', '')}`",
         f"- Trace files: {len(trace.get('files') or [])}",
+        "",
+        "## Policy Diff",
+        "",
+        f"- Enabled: {bool(policy_diff.get('enabled'))}",
+        f"- Fail on: `{policy_diff.get('fail_on', '')}`",
+        f"- Verdict: `{policy_summary.get('verdict', 'n/a')}`",
+        f"- Compared: {policy_summary.get('compared', 0)}",
+        f"- Artifact: `{policy_diff.get('report_artifact', '')}`",
     ]
+    if policy_diff.get("error"):
+        lines.append(f"- Error: `{policy_diff['error']}`")
     failed = [check for check in checks if check.get("status") == "fail"]
     if failed:
         lines.extend(["", "## Failed Checks", ""])

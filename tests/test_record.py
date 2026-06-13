@@ -183,6 +183,39 @@ class TestRequestFormat:
         for k in ["cache", "guard", "deadline", "rtc", "error"]:
             assert k not in r, f"optional field '{k}' should be absent when None"
 
+    def test_rollout_evidence_and_action_trace_present(self, tmp_path):
+        rec = _make_writer(tmp_path)
+        _dummy_request(
+            rec,
+            episode_id="ep-1",
+            request_id="req-1",
+            raw_actions=[[1.0]],
+            actions=[[0.5]],
+            action_dim=1,
+            guard={
+                "clamped": True,
+                "clamp_count": 1,
+                "violations": ["joint_0 above max"],
+            },
+            cache={"status": "hit"},
+            routing={"slot": "prod"},
+        )
+        rec.close()
+        r = _read_all(rec.filepath)[1]
+        evidence = r["evidence"]
+        assert evidence["kind"] == "tether.rollout_evidence"
+        assert evidence["policy"]["model_hash"] == "abc123def4567890"
+        assert evidence["policy"]["routing_slot"] == "prod"
+        assert evidence["request"]["episode_id"] == "ep-1"
+        assert evidence["request"]["request_id"] == "req-1"
+        assert evidence["action"]["raw_present"] is True
+        assert evidence["action"]["modified_by_guard"] is True
+        assert evidence["safety"]["clamped"] is True
+        assert evidence["safety"]["violation_count"] == 1
+        assert evidence["cache"]["status"] == "hit"
+        assert r["action_trace"]["raw_actions"] == [[1.0]]
+        assert r["action_trace"]["guarded_actions"] == [[0.5]]
+
     def test_rtc_field_preserved_when_provided(self, tmp_path):
         rec = _make_writer(tmp_path)
         _dummy_request(

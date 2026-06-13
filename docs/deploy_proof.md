@@ -9,6 +9,8 @@ tether prove ./export \
   --embodiment franka \
   --api-key "$TETHER_API_KEY" \
   --record-dir /tmp/tether-proof-traces \
+  --policy-diff-baseline ./traces/current.jsonl.gz \
+  --policy-diff-candidate ./traces/candidate.jsonl.gz \
   --profile production.yml \
   --samples 100 \
   --output-dir /tmp/tether-deploy-proof
@@ -19,6 +21,7 @@ The packet contains:
 - `deployment-proof.json` - machine-readable receipt.
 - `deployment-proof.md` - human-readable summary for PRs or customer handoff.
 - `export-manifest.json` - SHA-256 and size for every export file.
+- `policy-diff.json` - optional candidate/shadow policy rollout report.
 - `profile.json` - effective profile after defaults are merged.
 - `server.log` - server log tail from the proof run.
 - `MANIFEST.json` - SHA-256 and size for every packet artifact.
@@ -35,6 +38,9 @@ The packet contains:
   families when the profile requires metrics.
 - Optional trace recording when `--record-dir` is supplied or the profile
   requires a record trace.
+- Optional policy-diff gate when `--policy-diff-baseline` is supplied. Use
+  `--policy-diff-candidate` for baseline-vs-candidate traces, or
+  `--policy-diff-shadow` for shadow actions embedded in one trace.
 - ActionGuard stress when `--safety-config`, `--embodiment`, or
   `--custom-embodiment-config` is supplied: out-of-range clamp, non-finite
   rejection, and repeated-clamp trip.
@@ -51,6 +57,8 @@ thresholds:
   require_auth: true
   require_metrics: true
   require_record_trace: true
+  require_policy_diff: true
+  policy_diff_fail_on: any
   require_guard: true
   control_hz: 20
   max_first_roundtrip_ms: 1000

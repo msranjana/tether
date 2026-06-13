@@ -102,6 +102,7 @@ def tools_listing() -> str:
         "export_model": "Deploy",
         "serve_model": "Deploy",
         "prove_deployment": "Deploy",
+        "diff_policies": "Deploy",
         "list_models": "Models",
         "pull_model": "Models",
         "model_info": "Models",

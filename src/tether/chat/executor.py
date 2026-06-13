@@ -76,11 +76,30 @@ def _build_prove(p: dict[str, Any]) -> list[str]:
     _flag(args, "output-dir", p.get("output_dir"))
     _flag(args, "record-dir", p.get("record_dir"))
     _flag(args, "safety-config", p.get("safety_config"))
+    _flag(args, "policy-diff-baseline", p.get("policy_diff_baseline"))
+    _flag(args, "policy-diff-candidate", p.get("policy_diff_candidate"))
+    if p.get("policy_diff_shadow") is True:
+        args.append("--policy-diff-shadow")
+    _flag(args, "policy-diff-fail-on", p.get("policy_diff_fail_on"))
     _flag(args, "device", p.get("device"))
     _flag(args, "samples", p.get("samples"))
     _flag(args, "timeout-s", p.get("timeout_s"))
     if p.get("offline") is False:
         args.append("--online")
+    if p.get("json") is True:
+        args.append("--json")
+    return args
+
+
+def _build_policy_diff(p: dict[str, Any]) -> list[str]:
+    args = ["policy", "diff", str(p["baseline_trace"])]
+    if p.get("candidate_trace") and not p.get("shadow"):
+        args.append(str(p["candidate_trace"]))
+    if p.get("shadow") is True:
+        args.append("--shadow")
+    _flag(args, "min-action-cos", p.get("min_action_cos"))
+    _flag(args, "max-action-delta", p.get("max_action_delta"))
+    _flag(args, "max-latency-regression-pct", p.get("max_latency_regression_pct"))
     if p.get("json") is True:
         args.append("--json")
     return args
@@ -157,6 +176,7 @@ _BUILDERS = {
     "export_model": _build_export,
     "serve_model": _build_serve,
     "prove_deployment": _build_prove,
+    "diff_policies": _build_policy_diff,
     "benchmark": _build_bench,
     "evaluate": _build_eval,
     "list_models": _build_list_models,

@@ -82,6 +82,10 @@ TOOLS: list[dict[str, Any]] = [
                 "output_dir": {"type": "string", "description": "Directory for proof artifacts"},
                 "record_dir": {"type": "string", "description": "Optional trace directory to pass as --record-dir"},
                 "safety_config": {"type": "string", "description": "Optional SafetyLimits JSON path"},
+                "policy_diff_baseline": {"type": "string", "description": "Optional baseline trace to include policy-diff evidence in the proof packet."},
+                "policy_diff_candidate": {"type": "string", "description": "Optional candidate trace to compare against policy_diff_baseline."},
+                "policy_diff_shadow": {"type": "boolean", "description": "Compare policy_diff_baseline response.actions against routing.shadow_actions."},
+                "policy_diff_fail_on": {"type": "string", "enum": ["none", "actions", "latency", "guard", "shape", "any"], "description": "Fail the proof packet on selected policy diff failures. Default any."},
                 "device": {"type": "string", "enum": ["cpu", "cuda"], "description": "Runtime device. Default cpu for safe proof runs."},
                 "samples": {"type": "integer", "description": "Number of /act samples to measure. Default 20."},
                 "timeout_s": {"type": "integer", "description": "Timeout in seconds. Default 30."},
@@ -89,6 +93,22 @@ TOOLS: list[dict[str, Any]] = [
                 "json": {"type": "boolean", "description": "Emit JSON instead of human output."},
             },
             "required": ["export_dir"],
+        },
+    ),
+    _tool(
+        "diff_policies",
+        "Compare baseline/candidate recorded traces, or a shadow trace, before promotion. Use this when the user asks whether a new policy differs, regressed, or is safe to promote.",
+        {
+            "properties": {
+                "baseline_trace": {"type": "string", "description": "Baseline trace file. In shadow mode this is the shadow trace."},
+                "candidate_trace": {"type": "string", "description": "Candidate trace file. Omit when shadow=true."},
+                "shadow": {"type": "boolean", "description": "Compare response.actions with routing.shadow_actions in one trace."},
+                "min_action_cos": {"type": "number", "description": "Minimum action cosine similarity before failing."},
+                "max_action_delta": {"type": "number", "description": "Max absolute action delta before failing."},
+                "max_latency_regression_pct": {"type": "number", "description": "Max candidate latency regression fraction, e.g. 0.10 = 10%."},
+                "json": {"type": "boolean", "description": "Emit JSON instead of compact human output."},
+            },
+            "required": ["baseline_trace"],
         },
     ),
     _tool(

@@ -72,7 +72,15 @@ def _skip_blocking_onboarding(ctx: typer.Context) -> bool:
     if os.environ.get("TETHER_SKIP_ONBOARDING", "").lower() in {"1", "true", "yes", "on"}:
         return True
     command = ctx.invoked_subcommand or (sys.argv[1] if len(sys.argv) > 1 else "")
-    return command in {"serve", "go", "ros2-serve", "smoke", "deploy-proof", "prove"}
+    return command in {
+        "serve",
+        "go",
+        "ros2-serve",
+        "smoke",
+        "deploy-proof",
+        "prove",
+        "policy",
+    }
 
 
 def _looks_like_pi05_model_ref(model: str) -> bool:
@@ -3492,6 +3500,41 @@ def deploy_proof(
         "--state-dim",
         help="Length of the zero state vector used for proof /act requests.",
     ),
+    policy_diff_baseline: str = typer.Option(
+        "",
+        "--policy-diff-baseline",
+        help="Baseline trace for candidate-policy promotion evidence.",
+    ),
+    policy_diff_candidate: str = typer.Option(
+        "",
+        "--policy-diff-candidate",
+        help="Candidate trace for candidate-policy promotion evidence. Omit with --policy-diff-shadow.",
+    ),
+    policy_diff_shadow: bool = typer.Option(
+        False,
+        "--policy-diff-shadow",
+        help="Compare --policy-diff-baseline response.actions with routing.shadow_actions.",
+    ),
+    policy_diff_fail_on: str = typer.Option(
+        "",
+        "--policy-diff-fail-on",
+        help="Policy diff proof gate: none/actions/latency/guard/shape/any. Defaults to profile.",
+    ),
+    policy_diff_min_action_cos: float = typer.Option(
+        0.995,
+        "--policy-diff-min-action-cos",
+        help="Minimum action cosine for the proof packet policy diff.",
+    ),
+    policy_diff_max_action_delta: float = typer.Option(
+        0.10,
+        "--policy-diff-max-action-delta",
+        help="Max absolute action delta for the proof packet policy diff.",
+    ),
+    policy_diff_max_latency_regression_pct: float = typer.Option(
+        0.10,
+        "--policy-diff-max-latency-regression-pct",
+        help="Max candidate latency regression fraction for the proof packet policy diff.",
+    ),
     output_format: str = typer.Option(
         "human",
         "--format",
@@ -3514,6 +3557,21 @@ def deploy_proof(
         raise typer.Exit(2)
     if samples < 1:
         err_console.print("[red]--samples must be >= 1[/red]")
+        raise typer.Exit(2)
+    valid_policy_diff_fail_on = {"", "none", "actions", "latency", "guard", "shape", "any"}
+    if policy_diff_fail_on not in valid_policy_diff_fail_on:
+        err_console.print(
+            "[red]--policy-diff-fail-on must be one of "
+            "none/actions/latency/guard/shape/any[/red]"
+        )
+        raise typer.Exit(2)
+    if policy_diff_shadow and policy_diff_candidate:
+        err_console.print("[red]--policy-diff-candidate is not allowed with --policy-diff-shadow[/red]")
+        raise typer.Exit(2)
+    if policy_diff_baseline and not policy_diff_shadow and not policy_diff_candidate:
+        err_console.print(
+            "[red]--policy-diff-candidate is required unless --policy-diff-shadow is set[/red]"
+        )
         raise typer.Exit(2)
 
     import tether.deploy_proof as proof_mod
@@ -3541,6 +3599,13 @@ def deploy_proof(
             prewarm=prewarm,
             instruction=instruction,
             state_dim=state_dim,
+            policy_diff_baseline_trace=policy_diff_baseline or None,
+            policy_diff_candidate_trace=policy_diff_candidate or None,
+            policy_diff_shadow=policy_diff_shadow,
+            policy_diff_fail_on=policy_diff_fail_on or None,
+            policy_diff_min_action_cos=policy_diff_min_action_cos,
+            policy_diff_max_action_delta=policy_diff_max_action_delta,
+            policy_diff_max_latency_regression_pct=policy_diff_max_latency_regression_pct,
         )
     except proof_mod.DeployProofError as exc:
         err_console.print(f"[red]{exc}[/red]")
@@ -4884,7 +4949,7 @@ def go(
 # Verb-noun subgroups (2026-04-24 refactor — see ADR
 # 01_decisions/2026-04-24-cli-verb-noun-now-config-later-dashboard-eventually.md).
 #
-# Visible top-level: serve, doctor, models, train, validate, inspect, go (= 7).
+# Visible top-level: serve, doctor, models, train, validate, inspect, go, policy.
 # Old top-level commands stay registered under hidden=True so existing scripts
 # don't break; they will be removed in v0.2.
 # ---------------------------------------------------------------------------
@@ -4900,6 +4965,10 @@ inspect_app = typer.Typer(
 )
 comply_app = typer.Typer(
     help="Compliance evidence packs — export EU technical-file bundles and SBOMs.",
+)
+policy_app = typer.Typer(
+    help="Policy rollout gates - diff recorded or shadow policy behavior.",
+    no_args_is_help=True,
 )
 
 # Cross-register existing functions under the new verb-noun paths.
@@ -5182,11 +5251,106 @@ def comply_gaps(
     else:
         console.print(text, markup=False)
 
+
+@policy_app.command("diff")
+def policy_diff_cmd(
+    baseline_trace: str = typer.Argument(
+        ...,
+        help="Baseline trace file. In --shadow mode this is the shadow trace.",
+    ),
+    candidate_trace: Optional[str] = typer.Argument(
+        None,
+        help="Candidate trace file. Omit when --shadow is set.",
+    ),
+    shadow: bool = typer.Option(
+        False,
+        "--shadow",
+        help="Compare response.actions with routing.shadow_actions in one trace.",
+    ),
+    min_action_cos: float = typer.Option(
+        0.995,
+        "--min-action-cos",
+        help="Minimum cosine similarity before the action diff fails.",
+    ),
+    max_action_delta: float = typer.Option(
+        0.10,
+        "--max-action-delta",
+        help="Max absolute action delta before the action diff fails.",
+    ),
+    max_latency_regression_pct: float = typer.Option(
+        0.10,
+        "--max-latency-regression-pct",
+        help="Max candidate latency regression as a fraction, e.g. 0.10 = 10%.",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        help="Write the machine-readable JSON report to this path.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the full JSON report instead of a compact summary.",
+    ),
+    fail_on: str = typer.Option(
+        "none",
+        "--fail-on",
+        help="Exit 3 on threshold failures: none/actions/latency/guard/shape/any.",
+    ),
+) -> None:
+    """Compare baseline/candidate policy traces before promotion."""
+    from tether.policy_diff import (
+        PolicyDiffError,
+        diff_policy_traces,
+        format_policy_diff,
+        should_fail,
+        write_report,
+    )
+
+    valid_fail_on = {"none", "actions", "latency", "guard", "shape", "any"}
+    if fail_on not in valid_fail_on:
+        raise typer.BadParameter(
+            f"--fail-on must be one of {sorted(valid_fail_on)}, got {fail_on!r}"
+        )
+    if shadow and candidate_trace:
+        err_console.print("[red]candidate_trace is not allowed with --shadow[/red]")
+        raise typer.Exit(2)
+    if not shadow and not candidate_trace:
+        err_console.print("[red]candidate_trace is required unless --shadow is set[/red]")
+        raise typer.Exit(2)
+
+    try:
+        report = diff_policy_traces(
+            baseline_trace=baseline_trace,
+            candidate_trace=candidate_trace,
+            shadow=shadow,
+            min_action_cos=min_action_cos,
+            max_action_delta=max_action_delta,
+            max_latency_regression_pct=max_latency_regression_pct,
+        )
+    except (FileNotFoundError, PolicyDiffError, ValueError) as exc:
+        err_console.print(f"[red]Policy diff failed:[/red] {exc}")
+        raise typer.Exit(1)
+
+    if output:
+        write_report(report, output)
+    if json_output:
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        console.print(format_policy_diff(report), markup=False)
+        if output:
+            console.print(f"Wrote policy diff report: {output}")
+
+    if should_fail(report, fail_on):  # type: ignore[arg-type]
+        raise typer.Exit(3)
+
+
 app.add_typer(models_app, name="models")
 app.add_typer(train_app, name="train")
 app.add_typer(validate_app, name="validate")
 app.add_typer(inspect_app, name="inspect")
 app.add_typer(comply_app, name="comply")
+app.add_typer(policy_app, name="policy")
 
 # ─── tether connect {name} / disconnect / list ──────────────────────────────
 

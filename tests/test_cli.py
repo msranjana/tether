@@ -129,6 +129,7 @@ def test_deploy_proof_help():
     assert result.exit_code == 0
     assert "deployment proof" in result.output.lower()
     assert "--profile" in result.output
+    assert "--policy-diff-baseline" in result.output
 
 
 def test_prove_help_alias():
@@ -136,6 +137,51 @@ def test_prove_help_alias():
     assert result.exit_code == 0
     assert "ready to deploy" in result.output.lower()
     assert "--profile" in result.output
+
+
+def test_policy_diff_help():
+    result = runner.invoke(app, ["policy", "diff", "--help"])
+    assert result.exit_code == 0
+    assert "shadow" in result.output.lower()
+    assert "--fail-on" in result.output
+
+
+def test_policy_diff_fail_on_any_exits_three(monkeypatch):
+    import tether.policy_diff as policy_diff_mod
+
+    def fake_diff_policy_traces(**kwargs):
+        assert kwargs["baseline_trace"] == "base.jsonl"
+        assert kwargs["candidate_trace"] == "cand.jsonl"
+        return {
+            "kind": "tether.policy_diff",
+            "mode": "trace_pair",
+            "summary": {
+                "verdict": "fail",
+                "baseline_requests": 1,
+                "compared": 1,
+                "missing_candidate": 0,
+                "request_mismatches": 0,
+                "action_failures": 1,
+                "latency_regressions": 0,
+                "shape_failures": 0,
+                "guard_regressions": 0,
+                "max_action_delta": 0.2,
+                "mean_action_delta": 0.2,
+                "p95_action_delta": 0.2,
+                "min_action_cosine": 0.9,
+                "metadata_warnings": [],
+            },
+        }
+
+    monkeypatch.setattr(policy_diff_mod, "diff_policy_traces", fake_diff_policy_traces)
+
+    result = runner.invoke(
+        app,
+        ["policy", "diff", "base.jsonl", "cand.jsonl", "--fail-on", "any"],
+    )
+
+    assert result.exit_code == 3
+    assert "FAIL" in result.output
 
 
 def test_smoke_json_uses_receipt_runner(tmp_path, monkeypatch):
@@ -268,6 +314,14 @@ def test_deploy_proof_json_uses_receipt_runner(tmp_path, monkeypatch):
             str(tmp_path / "traces"),
             "--record-images",
             "none",
+            "--policy-diff-baseline",
+            str(tmp_path / "current.jsonl.gz"),
+            "--policy-diff-candidate",
+            str(tmp_path / "candidate.jsonl.gz"),
+            "--policy-diff-fail-on",
+            "guard",
+            "--policy-diff-max-action-delta",
+            "0.05",
             "--no-prewarm",
             "--instruction",
             "pick",
@@ -292,6 +346,10 @@ def test_deploy_proof_json_uses_receipt_runner(tmp_path, monkeypatch):
     assert seen["api_key"] == "secret"
     assert seen["record_dir"] == str(tmp_path / "traces")
     assert seen["record_images"] == "none"
+    assert seen["policy_diff_baseline_trace"] == str(tmp_path / "current.jsonl.gz")
+    assert seen["policy_diff_candidate_trace"] == str(tmp_path / "candidate.jsonl.gz")
+    assert seen["policy_diff_fail_on"] == "guard"
+    assert seen["policy_diff_max_action_delta"] == 0.05
     assert seen["prewarm"] is False
     assert seen["instruction"] == "pick"
     assert seen["state_dim"] == 9

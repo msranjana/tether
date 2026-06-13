@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from tether.deploy_proof import (
+    _run_policy_diff_evidence,
     _redact_command,
     format_deploy_proof_human,
     format_deploy_proof_markdown,
@@ -46,10 +47,29 @@ def _receipt(tmp_path):
         "security": {"enabled": True, "checks": [{"status": "pass"}], "probes": [{}]},
         "metrics": {"status_code": 200, "metric_names": ["tether_act_latency_seconds"]},
         "trace": {"record_dir": str(tmp_path / "traces"), "files": [{"path": "trace.jsonl.gz"}]},
+        "policy_diff": {
+            "enabled": True,
+            "baseline_trace": str(tmp_path / "traces" / "current.jsonl.gz"),
+            "candidate_trace": str(tmp_path / "traces" / "candidate.jsonl.gz"),
+            "shadow": False,
+            "fail_on": "any",
+            "report_artifact": "policy-diff.json",
+            "error": None,
+            "report": {
+                "kind": "tether.policy_diff",
+                "summary": {
+                    "verdict": "pass",
+                    "compared": 3,
+                    "baseline_requests": 3,
+                },
+            },
+            "checks": [{"name": "policy_diff_gate", "status": "pass"}],
+        },
         "export_manifest": {"root": str(tmp_path / "export"), "files": [{"path": "model.onnx"}]},
         "checks": [
             {"name": "server_health_ready", "status": "pass"},
             {"name": "latency_roundtrip_p95", "status": "pass"},
+            {"name": "policy_diff_gate", "status": "pass"},
         ],
     }
 
@@ -121,18 +141,63 @@ def test_deploy_proof_formatters_and_packet_manifest(tmp_path):
 
     assert "tether deploy-proof - PASS" in human
     assert "roundtrip p50/p95/p99=8.1/9.9/10.0ms" in human
+    assert "policy diff: PASS" in human
     assert "- Status: PASS" in markdown
     assert "- Roundtrip p99: 10.0 ms" in markdown
     assert "- API-key checks enabled: True" in markdown
+    assert "- Verdict: `pass`" in markdown
 
     proof_dir = tmp_path / "proof"
     manifest = write_deploy_proof_packet(receipt, proof_dir)
 
     assert (proof_dir / "deployment-proof.json").exists()
     assert (proof_dir / "deployment-proof.md").exists()
+    assert (proof_dir / "policy-diff.json").exists()
     assert (proof_dir / "server.log").read_text() == "server ready\n"
     assert (proof_dir / "MANIFEST.json").exists()
     names = {item["name"] for item in manifest["files"]}
-    assert {"deployment-proof.json", "deployment-proof.md", "profile.json", "export-manifest.json"} <= names
+    assert {
+        "deployment-proof.json",
+        "deployment-proof.md",
+        "profile.json",
+        "export-manifest.json",
+        "policy-diff.json",
+    } <= names
     body = json.loads((proof_dir / "deployment-proof.json").read_text())
     assert body["kind"] == "tether.deployment_proof"
+    policy_diff = json.loads((proof_dir / "policy-diff.json").read_text())
+    assert policy_diff["kind"] == "tether.policy_diff"
+
+
+def test_policy_diff_evidence_gates_failures(monkeypatch, tmp_path):
+    report = {
+        "kind": "tether.policy_diff",
+        "mode": "trace_pair",
+        "summary": {
+            "verdict": "fail",
+            "compared": 1,
+            "action_failures": 1,
+        },
+    }
+
+    def fake_diff_policy_traces(**kwargs):
+        assert kwargs["baseline_trace"] == tmp_path / "current.jsonl.gz"
+        assert kwargs["candidate_trace"] == tmp_path / "candidate.jsonl.gz"
+        return report
+
+    monkeypatch.setattr("tether.policy_diff.diff_policy_traces", fake_diff_policy_traces)
+
+    evidence = _run_policy_diff_evidence(
+        baseline_trace=tmp_path / "current.jsonl.gz",
+        candidate_trace=tmp_path / "candidate.jsonl.gz",
+        shadow=False,
+        fail_on="any",
+        min_action_cos=0.995,
+        max_action_delta=0.10,
+        max_latency_regression_pct=0.10,
+    )
+
+    assert evidence["enabled"] is True
+    assert evidence["report"] == report
+    gate = [check for check in evidence["checks"] if check["name"] == "policy_diff_gate"][0]
+    assert gate["status"] == "fail"

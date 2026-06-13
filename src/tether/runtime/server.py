@@ -972,6 +972,7 @@ class TetherServer:
         noisy_actions, steps_used = self._run_denoise(noisy_actions, position_ids, vlm_kv=vlm_kv)
 
         actions_np = noisy_actions[0]  # [chunk, action_dim]
+        raw_actions_before_guard = actions_np.copy()
 
         # tether guard — safety check
         safety_violations = 0
@@ -1060,6 +1061,8 @@ class TetherServer:
             # (omit when guard_summary remained None due to exception above).
             if guard_summary is not None:
                 result["guard_summary"] = guard_summary
+                if guard_summary.get("clamped"):
+                    result["_raw_actions_for_record"] = raw_actions_before_guard.tolist()
         if self._deadline_ms is not None:
             result["deadline_exceeded"] = deadline_exceeded
             if self._deadline_misses:
@@ -1389,6 +1392,8 @@ try:
         instruction: str = ""
         state: list[float] | None = None
         episode_id: str | None = None  # B.3: triggers RTC reset on change
+        request_id: str | None = None
+        session_id: str | None = None
 
     class HealthResponse(BaseModel):
         status: str
@@ -2692,6 +2697,12 @@ def create_app(
                 else "prod"
             )
             _rtc_for_record: dict[str, Any] | None = None
+            _raw_actions_for_record: list[list[float]] | None = (
+                result.get("_raw_actions_for_record")
+                if isinstance(result, dict)
+                and isinstance(result.get("_raw_actions_for_record"), list)
+                else None
+            )
 
             # Circuit-breaker bookkeeping on returned result. Error-result
             # responses (e.g., NaN guard trips) count as crashes; clean
@@ -2734,6 +2745,8 @@ def create_app(
                         result["guard_margin"] = round(_guard_margin, 6)
                     _was_modified = not np.array_equal(_arr, _safe)
                     if _was_modified:
+                        if _raw_actions_for_record is None:
+                            _raw_actions_for_record = _arr.tolist()
                         result["actions"] = _safe.tolist()
                         for _cr in _check_results:
                             _guard_violations.extend(_cr.violations)
@@ -2932,7 +2945,10 @@ def create_app(
                     image_b64=request.image,
                     instruction=request.instruction,
                     state=request.state,
+                    episode_id=request.episode_id,
+                    request_id=request.request_id,
                     actions=actions,
+                    raw_actions=_raw_actions_for_record,
                     action_dim=action_dim,
                     latency_total_ms=latency_total,
                     mode=str(result.get("inference_mode", "")),
@@ -3007,6 +3023,9 @@ def create_app(
                     )
                     if _two_routing_decision.degraded_routing:
                         _resp_headers["X-Tether-Routing-Degraded"] = "true"
+
+            if isinstance(result, dict):
+                result.pop("_raw_actions_for_record", None)
 
             return JSONResponse(content=result, headers=_resp_headers)
 

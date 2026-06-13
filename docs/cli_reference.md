@@ -17,6 +17,7 @@ manual workflows stay stable.
 |---|---|
 | [`chat`](#tether-chat) | Natural-language agent that runs tether commands for you |
 | [`prove`](#tether-prove) | Friendly deployment-proof alias for real export readiness |
+| [`policy`](#tether-policy) | Promotion gates for recorded and shadow policy rollouts |
 | [`go`](#tether-go) | One-command deploy: probe hardware → pick model → pull → export → serve |
 | [`serve`](#tether-serve) | Start an inference server from an exported model directory |
 | [`doctor`](#tether-doctor) | Diagnose install + GPU issues + per-deploy traps |
@@ -76,10 +77,38 @@ stress safety config, hash export artifacts, and write a proof packet.
 
 ```bash
 tether prove ./tether_export --embodiment franka --record-dir ./traces
+
+# Include rollout evidence in the same proof packet
+tether prove ./tether_export \
+  --policy-diff-baseline ./traces/current.jsonl.gz \
+  --policy-diff-candidate ./traces/candidate.jsonl.gz \
+  --policy-diff-fail-on any
 ```
 
 Use `tether deploy-proof` directly in older scripts; both commands are
-supported. Full flag list: `tether prove --help`.
+supported. When policy-diff flags are supplied, the packet includes
+`policy-diff.json` and the proof can fail on action, latency, guard, shape, or
+any policy-diff regression. Full flag list: `tether prove --help`.
+
+---
+
+## `tether policy`
+
+Policy rollout gates that operate on recorded traces. Today the main command is
+`policy diff`: compare a baseline trace with a candidate trace, or compare a
+single shadow trace's recorded production actions against `routing.shadow_actions`.
+
+```bash
+# Offline promotion check: same observations, candidate policy output
+tether policy diff ./traces/v1.jsonl.gz ./traces/v2.jsonl.gz --fail-on any
+
+# Shadow rollout check: live actions vs shadow actions in one trace
+tether policy diff ./traces/shadow.jsonl.gz --shadow --output policy-diff.json
+```
+
+The report includes action cosine/max-delta, latency regressions, shape failures,
+guard regressions, request mismatches, metadata warnings, and a pass/warn/fail
+verdict. Exit code `3` means the selected `--fail-on` gate tripped.
 
 ---
 

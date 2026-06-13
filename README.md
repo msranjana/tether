@@ -260,6 +260,7 @@ tether go               # one-command-deploy: probe → resolve → pull → ser
 tether prove            # friendly deployment-proof alias for real export readiness
 tether serve            # explicit-config server (full flag surface)
 tether deploy-proof     # explicit backend command used by tether prove
+tether policy diff      # compare recorded/shadow policy behavior before rollout
 tether doctor           # diagnose env + GPU + per-deploy issues
 tether models {list, pull, info, export}    # curated registry + lifecycle
 tether train  {finetune, distill}           # training operations
@@ -363,11 +364,18 @@ jitter, control-budget misses, API-key boundary checks, `/metrics` scrape,
 optional trace recording, ActionGuard stress checks, export file hashes, and a
 hashed `MANIFEST.json`.
 
+Before promoting a new or shadow policy, include a policy diff in the proof
+packet with `--policy-diff-baseline` plus `--policy-diff-candidate` or
+`--policy-diff-shadow` to gate action deltas, latency regressions, shape
+mismatches, and guard regressions.
+
 ```bash
 tether prove ./p0 \
   --embodiment franka \
   --api-key "$TETHER_API_KEY" \
   --record-dir /tmp/tether-proof-traces \
+  --policy-diff-baseline ./traces/current.jsonl.gz \
+  --policy-diff-candidate ./traces/candidate.jsonl.gz \
   --profile production.yml \
   --samples 100 \
   --output-dir /tmp/tether-deploy-proof
