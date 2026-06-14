@@ -84,6 +84,7 @@ def _build_prove(p: dict[str, Any]) -> list[str]:
     _flag(args, "device", p.get("device"))
     _flag(args, "samples", p.get("samples"))
     _flag(args, "timeout-s", p.get("timeout_s"))
+    _flag(args, "control-hz", p.get("control_hz"))
     if p.get("offline") is False:
         args.append("--online")
     if p.get("json") is True:
@@ -110,6 +111,21 @@ def _build_promote(p: dict[str, Any]) -> list[str]:
     _flag(args, "profile", p.get("profile"))
     if p.get("candidate_active") is True:
         args.append("--candidate-active")
+    if p.get("json") is True:
+        args.append("--json")
+    return args
+
+
+def _build_realtime_cert(p: dict[str, Any]) -> list[str]:
+    args = ["bench", "realtime", str(p["proof"])]
+    _flag(args, "target", p.get("target"))
+    _flag(args, "control-hz", p.get("control_hz"))
+    _flag(args, "max-roundtrip-p95-ms", p.get("max_roundtrip_p95_ms"))
+    _flag(args, "max-jitter-p95-minus-p50-ms", p.get("max_jitter_p95_minus_p50_ms"))
+    _flag(args, "max-deadline-misses", p.get("max_deadline_misses"))
+    _flag(args, "max-control-budget-misses", p.get("max_control_budget_misses"))
+    _flag(args, "max-act-errors", p.get("max_act_errors"))
+    _flag(args, "output-dir", p.get("output_dir"))
     if p.get("json") is True:
         args.append("--json")
     return args
@@ -193,6 +209,7 @@ _BUILDERS = {
     "prove_deployment": _build_prove,
     "diff_policies": _build_policy_diff,
     "decide_promotion": _build_promote,
+    "certify_realtime_serving": _build_realtime_cert,
     "show_promotion_profile": _build_show_profile,
     "benchmark": _build_bench,
     "evaluate": _build_eval,

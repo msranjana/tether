@@ -89,6 +89,7 @@ TOOLS: list[dict[str, Any]] = [
                 "device": {"type": "string", "enum": ["cpu", "cuda"], "description": "Runtime device. Default cpu for safe proof runs."},
                 "samples": {"type": "integer", "description": "Number of /act samples to measure. Default 20."},
                 "timeout_s": {"type": "integer", "description": "Timeout in seconds. Default 30."},
+                "control_hz": {"type": "number", "description": "Robot control rate for realtime budget evidence, e.g. 20 for a 20 Hz loop."},
                 "offline": {"type": "boolean", "description": "Run in offline mode. Default true."},
                 "json": {"type": "boolean", "description": "Emit JSON instead of human output."},
             },
@@ -122,6 +123,25 @@ TOOLS: list[dict[str, Any]] = [
                 "json": {"type": "boolean", "description": "Emit JSON instead of compact human output."},
             },
             "required": ["packet"],
+        },
+    ),
+    _tool(
+        "certify_realtime_serving",
+        "Build a realtime serving certificate from a deployment proof packet. Use this when the user asks whether an existing proof can run at 20 Hz, 50 Hz, realtime, or inside a robot control-loop budget. If the user gives an export instead of a proof, run prove_deployment first with control_hz, then run this tool on the proof packet.",
+        {
+            "properties": {
+                "proof": {"type": "string", "description": "Deployment proof packet directory, or deployment-proof.json path."},
+                "target": {"type": "string", "description": "Hardware/cell label to write into the certificate, e.g. agx-orin-cell-a."},
+                "control_hz": {"type": "number", "description": "Robot control rate. Omit to use proof/profile evidence."},
+                "max_roundtrip_p95_ms": {"type": "number", "description": "Optional p95 roundtrip budget. Omit to use the control period."},
+                "max_jitter_p95_minus_p50_ms": {"type": "number", "description": "Optional hard jitter budget."},
+                "max_deadline_misses": {"type": "integer", "description": "Allowed deadline misses. Default 0."},
+                "max_control_budget_misses": {"type": "integer", "description": "Allowed control-budget misses. Default 0."},
+                "max_act_errors": {"type": "integer", "description": "Allowed /act errors. Default 0."},
+                "output_dir": {"type": "string", "description": "Directory for realtime-serving-cert artifacts."},
+                "json": {"type": "boolean", "description": "Emit JSON instead of human output."},
+            },
+            "required": ["proof"],
         },
     ),
     _tool(

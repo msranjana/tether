@@ -59,6 +59,7 @@ def test_prove_deployment_tool_routes_to_friendly_alias() -> None:
     props = tool["function"]["parameters"]["properties"]
     assert "export_dir" in props
     assert "embodiment" in props
+    assert "control_hz" in props
 
     argv = _argv_for(
         "prove_deployment",
@@ -70,6 +71,7 @@ def test_prove_deployment_tool_routes_to_friendly_alias() -> None:
             "policy_diff_candidate": "./traces/candidate.jsonl.gz",
             "policy_diff_fail_on": "any",
             "samples": 5,
+            "control_hz": 20,
             "json": True,
         },
     )
@@ -81,6 +83,7 @@ def test_prove_deployment_tool_routes_to_friendly_alias() -> None:
         "--policy-diff-candidate", "./traces/candidate.jsonl.gz",
         "--policy-diff-fail-on", "any",
         "--samples", "5",
+        "--control-hz", "20",
         "--json",
     ]
 
@@ -142,6 +145,43 @@ def test_decide_promotion_tool_routes_to_promote() -> None:
     ]
 
 
+def test_certify_realtime_serving_routes_to_bench_realtime() -> None:
+    tool = by_name()["certify_realtime_serving"]
+    props = tool["function"]["parameters"]["properties"]
+    assert "proof" in props
+    assert "control_hz" in props
+    assert "max_roundtrip_p95_ms" in props
+
+    argv = _argv_for(
+        "certify_realtime_serving",
+        {
+            "proof": "./proof",
+            "target": "agx-orin-cell-a",
+            "control_hz": 20,
+            "max_roundtrip_p95_ms": 45,
+            "max_jitter_p95_minus_p50_ms": 8,
+            "max_deadline_misses": 0,
+            "max_control_budget_misses": 0,
+            "max_act_errors": 0,
+            "output_dir": "./cert",
+            "json": True,
+        },
+    )
+
+    assert argv == [
+        "bench", "realtime", "./proof",
+        "--target", "agx-orin-cell-a",
+        "--control-hz", "20",
+        "--max-roundtrip-p95-ms", "45",
+        "--max-jitter-p95-minus-p50-ms", "8",
+        "--max-deadline-misses", "0",
+        "--max-control-budget-misses", "0",
+        "--max-act-errors", "0",
+        "--output-dir", "./cert",
+        "--json",
+    ]
+
+
 def test_profile_tools_route_to_profiles_commands() -> None:
     assert "list_promotion_profiles" in _STATIC
     assert _argv_for("list_promotion_profiles", {}) == ["profiles", "list", "--json"]
@@ -175,7 +215,16 @@ def test_system_prompt_prefers_prove_for_deployment_readiness() -> None:
     assert "prove_deployment" in p
     assert "safe, ready, deployable, production-ready" in p
     assert "policy_diff_*" in p
+    assert "control_hz" in p
     assert "does not actuate hardware" in p
+
+
+def test_system_prompt_prefers_realtime_cert_for_control_budget() -> None:
+    p = SYSTEM_PROMPT
+    assert "certify_realtime_serving" in p
+    assert "20 Hz" in p
+    assert "control-loop budget" in p
+    assert "run prove_deployment first" in p
 
 
 def test_system_prompt_prefers_policy_diff_for_rollout_questions() -> None:

@@ -13,6 +13,7 @@ WELCOME_CARD = """[bold]tether chat[/bold] — natural language for VLA deployme
 
 What I can do for you:
   • Prove an export      [dim]"prove ./export is ready for franka"[/dim]
+  • Certify realtime     [dim]"can ./proof run at 20 Hz on Orin?"[/dim]
   • Promote or block     [dim]"can I promote ./tether-deploy-proof?"[/dim]
   • Explain failures     [dim]"why was this proof blocked?"[/dim]
   • Diagnose runtime     [dim]"why is my install broken?"[/dim]
@@ -32,6 +33,7 @@ SHORT_BANNER = """[bold]tether chat[/bold] — type a question, [green]/help[/gr
 TOUR_PROMPTS = [
     'what version of tether am i on?',
     'prove ./export is ready for franka without touching hardware',
+    'can ./tether-deploy-proof run at 20 Hz on Orin?',
     'can i promote ./tether-deploy-proof?',
     'why was my deployment proof blocked?',
     'check my install for problems',
@@ -45,13 +47,13 @@ SLASH_HELP = """[bold]Slash commands[/bold]
   [green]/history[/green]   show the conversation so far
   [green]/clear[/green]     clear the screen (keeps conversation context)
   [green]/reset[/green]     start a fresh conversation (drops context)
-  [green]/tour[/green]      show 5 example prompts to copy-paste
+  [green]/tour[/green]      show suggested prompts to copy-paste
   [green]exit[/green]       quit
 
 [bold]What chat can do[/bold]
   Natural-language prompts route to tools that wrap the [cyan]tether[/cyan] CLI.
   Examples: "prove ./export is ready for franka", "can I promote this proof?",
-  "diff these rollout traces", "deploy smolvla to my mac".
+  "can this proof run at 20 Hz?", "diff these rollout traces", "deploy smolvla to my mac".
 
 [bold]Conversation persistence[/bold]
   Sessions auto-save to ~/.cache/tether/chat_history/. Resume the most
@@ -62,6 +64,7 @@ TOUR_BLOCK = """[bold]Try one of these[/bold] — copy-paste any line:
 
   what version of tether am i on?
   prove ./export is ready for franka without touching hardware
+  can ./tether-deploy-proof run at 20 Hz on Orin?
   can i promote ./tether-deploy-proof?
   why was my deployment proof blocked?
   check my install for problems
@@ -102,6 +105,7 @@ def tools_listing() -> str:
         "export_model": "Deploy",
         "serve_model": "Deploy",
         "prove_deployment": "Deploy",
+        "certify_realtime_serving": "Deploy",
         "diff_policies": "Deploy",
         "decide_promotion": "Deploy",
         "list_promotion_profiles": "Deploy",
