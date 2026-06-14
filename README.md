@@ -393,6 +393,26 @@ It writes a hashed packet with `policy-diff.json` and
 `promotion-decision.json`, then exits `0` for `PROMOTE`, `1` for `HOLD`, and
 `4` for `ROLLBACK`.
 
+For serving-specific deployment confidence, turn the same proof packet into a
+realtime certificate. This answers whether the measured `/act` path fits the
+robot control loop on the target hardware/cell:
+
+```bash
+tether prove ./p0 \
+  --profile production.yml \
+  --control-hz 20 \
+  --samples 100 \
+  --output-dir /tmp/tether-deploy-proof
+
+tether bench realtime /tmp/tether-deploy-proof \
+  --target agx-orin-cell-a \
+  --output-dir /tmp/tether-realtime-cert
+```
+
+The certificate gates roundtrip p95 against the control period, deadline
+misses, `/act` errors, and control-budget misses, then writes
+`realtime-serving-cert.json`, Markdown, and a hashed `MANIFEST.json`.
+
 ```bash
 tether prove ./p0 \
   --embodiment franka \

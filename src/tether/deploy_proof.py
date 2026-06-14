@@ -819,6 +819,7 @@ def run_deploy_proof(
     safety_config: str | None = None,
     api_key: str | None = None,
     deadline_ms: float = 0.0,
+    control_hz: float | None = None,
     max_concurrent: int = 0,
     record_dir: str | Path | None = None,
     record_images: str = "hash_only",
@@ -840,6 +841,8 @@ def run_deploy_proof(
         raise DeployProofError(f"act_samples must be >= 1, got {act_samples}")
     if state_dim < 0:
         raise DeployProofError(f"state_dim must be >= 0, got {state_dim}")
+    if control_hz is not None and control_hz <= 0:
+        raise DeployProofError(f"control_hz must be > 0, got {control_hz}")
 
     export_path = Path(export_dir).expanduser().resolve()
     if not export_path.exists():
@@ -848,6 +851,8 @@ def run_deploy_proof(
         raise DeployProofError(f"export directory has no .onnx files: {export_path}")
 
     profile = load_deploy_profile(profile_path)
+    if control_hz is not None:
+        profile.setdefault("thresholds", {})["control_hz"] = float(control_hz)
     out_path = Path(output_dir).expanduser().resolve() if output_dir else _default_output_dir()
     if port == 0:
         port = find_free_port()

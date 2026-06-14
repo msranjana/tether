@@ -33,7 +33,7 @@ Everything else is an evidence source behind those decisions:
 
 | Evidence area | Commands |
 |---|---|
-| Runtime and hardware | [`go`](#tether-go), [`serve`](#tether-serve), [`doctor`](#tether-doctor), `smoke` |
+| Runtime and hardware | [`go`](#tether-go), [`serve`](#tether-serve), [`doctor`](#tether-doctor), [`bench realtime`](#tether-bench-realtime), `smoke` |
 | Rollout behavior | [`policy`](#tether-policy), [`traces`](#tether-traces), `replay`, [`eval`](#tether-eval) |
 | Model lifecycle | [`models`](#tether-models), [`validate`](#tether-validate), [`train`](#tether-train), [`verify`](#tether-verify) |
 | Enterprise/admin | [`comply`](#tether-comply), [`pro`](#tether-pro), [`contribute`](#tether-contribute), [`curate`](#tether-curate), [`data`](#tether-data) |
@@ -195,6 +195,38 @@ tether rollout gate ./traces/shadow.jsonl.gz \
 `MANIFEST.json`, then exits with the rollout decision: `0` for `PROMOTE`, `1`
 for `HOLD`, `4` for `ROLLBACK`, and `2` for invalid trace/profile/packet
 inputs.
+
+---
+
+## `tether bench realtime`
+
+Realtime serving certificate. It consumes an existing proof packet and returns
+one serving decision for a target robot control loop. Use it after `tether prove`
+when the buyer question is "can this exact export/server path stay inside our
+20 Hz or 50 Hz control budget?"
+
+```bash
+tether prove ./tether_export \
+  --profile warehouse-safe \
+  --control-hz 20 \
+  --samples 100 \
+  --output-dir ./tether-deploy-proof
+
+tether bench realtime ./tether-deploy-proof \
+  --target agx-orin-cell-a \
+  --output-dir ./tether-realtime-cert \
+  --json
+```
+
+By default, p95 roundtrip latency must fit inside the control period. Override
+that with `--max-roundtrip-p95-ms` when the robot cell has a separate serving
+SLO. The certificate also gates deadline misses, control-budget misses, and
+`/act` errors; use `--max-jitter-p95-minus-p50-ms` to make jitter a hard gate.
+
+Artifacts written with `--output-dir`: `realtime-serving-cert.json`,
+`realtime-serving-cert.md`, and `MANIFEST.json`. Exit codes: `0` means `PASS`,
+`1` means realtime serving failed, and `2` means the proof packet or arguments
+could not be loaded.
 
 ---
 

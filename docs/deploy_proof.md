@@ -10,6 +10,7 @@ backend command and remains supported for scripts.
 tether prove ./export \
   --embodiment franka \
   --api-key "$TETHER_API_KEY" \
+  --control-hz 20 \
   --record-dir /tmp/tether-proof-traces \
   --policy-diff-baseline ./traces/current.jsonl.gz \
   --policy-diff-candidate ./traces/candidate.jsonl.gz \
@@ -70,6 +71,24 @@ The command waits for pending `shadow_result` rows, writes `policy-diff.json`,
 verifies a hashed packet, and writes `promotion-decision.json`. Its top-level
 decision is `PROMOTE`, `HOLD`, or `ROLLBACK`; the embedded promotion report
 still uses `BLOCK` for a failed inactive candidate.
+
+## Realtime serving certificate
+
+Use `bench realtime` when the proof packet needs a serving-specific receipt for
+one hardware target and robot control loop:
+
+```bash
+tether bench realtime /tmp/tether-deploy-proof \
+  --target agx-orin-cell-a \
+  --output-dir /tmp/tether-realtime-cert
+```
+
+The certificate gates p95 roundtrip latency against the control period, deadline
+misses, `/act` errors, and control-budget misses. It can use the control rate
+stored by `tether prove --control-hz`, a control rate from the proof profile, or
+an explicit `tether bench realtime --control-hz` override. The output directory
+contains `realtime-serving-cert.json`, `realtime-serving-cert.md`, and a hashed
+`MANIFEST.json`.
 
 ## What it checks
 

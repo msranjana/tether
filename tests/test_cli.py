@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from typer.testing import CliRunner
 
 from tether import __version__
-from tether.cli import app, _skip_blocking_onboarding
+from tether.cli import _skip_blocking_onboarding, app
 
 runner = CliRunner()
 
@@ -130,6 +130,47 @@ def test_deploy_proof_help():
     assert "deployment proof" in result.output.lower()
     assert "--profile" in result.output
     assert "--policy-diff-baseline" in result.output
+
+
+def test_bench_realtime_json_from_proof_packet(tmp_path):
+    proof_dir = tmp_path / "proof"
+    proof_dir.mkdir()
+    receipt = {
+        "schema_version": 1,
+        "kind": "tether.deployment_proof",
+        "passed": True,
+        "export_dir": str(tmp_path / "export"),
+        "profile": {"name": "ci", "thresholds": {}},
+        "act_samples": [
+            {"roundtrip_ms": 20.0},
+            {"roundtrip_ms": 30.0},
+            {"roundtrip_ms": 40.0},
+        ],
+        "latency": {
+            "samples": 3,
+            "roundtrip_ms": {
+                "p50_ms": 30.0,
+                "p95_ms": 40.0,
+                "p99_ms": 40.0,
+                "max_ms": 40.0,
+            },
+            "jitter": {"p95_minus_p50_ms": 10.0},
+            "deadline_misses": 0,
+            "act_errors": 0,
+        },
+    }
+    (proof_dir / "deployment-proof.json").write_text(json.dumps(receipt) + "\n")
+
+    result = runner.invoke(
+        app,
+        ["bench", "realtime", str(proof_dir), "--control-hz", "20", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    body = json.loads(result.output)
+    assert body["kind"] == "tether.realtime_serving_certificate"
+    assert body["decision"] == "PASS"
+    assert body["control_budget"]["missed_samples"] == 0
 
 
 def test_prove_help_alias():
@@ -603,6 +644,7 @@ def test_doctor_json_system_probe_is_machine_readable():
 
 def test_deploy_commands_skip_blocking_onboarding():
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="serve")) is True
+    assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="bench")) is True
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="go")) is True
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="smoke")) is True
     assert _skip_blocking_onboarding(SimpleNamespace(invoked_subcommand="deploy-proof")) is True

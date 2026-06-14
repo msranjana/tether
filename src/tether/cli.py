@@ -44,6 +44,7 @@ _NOARGS_SUMMARY = """[bold]tether[/bold] — deployment confidence for VLA robot
 
 [bold cyan]Evidence sources:[/bold cyan]
   [green]tether doctor[/green]              collect install + GPU evidence
+  [green]tether bench realtime ./proof[/green] certify p95/control-loop serving budget
   [green]tether go --model X[/green]        probe → pull → export → serve
   [green]tether smoke[/green]               prove install + local /act roundtrip
   [green]tether models list[/green]         browse the curated model registry
@@ -79,6 +80,7 @@ def _skip_blocking_onboarding(ctx: typer.Context) -> bool:
     command = ctx.invoked_subcommand or (sys.argv[1] if len(sys.argv) > 1 else "")
     return command in {
         "serve",
+        "bench",
         "go",
         "ros2-serve",
         "smoke",
@@ -852,9 +854,90 @@ def validate(
     raise typer.Exit(0 if passed else 1)
 
 
+def _bench_realtime_cmd(
+    proof: str,
+    *,
+    target: str = "",
+    control_hz: float = 0.0,
+    max_roundtrip_p95_ms: float = 0.0,
+    max_jitter_p95_minus_p50_ms: float = 0.0,
+    max_deadline_misses: int = 0,
+    max_control_budget_misses: int = 0,
+    max_act_errors: int = 0,
+    output_dir: str = "",
+    output_format: str = "human",
+    json_output: bool = False,
+) -> None:
+    """Build a realtime-serving certificate from a deployment proof packet."""
+
+    if json_output:
+        output_format = "json"
+    if output_format not in ("human", "json", "markdown"):
+        err_console.print(
+            f"[red]--format must be 'human', 'json', or 'markdown', got {output_format!r}[/red]"
+        )
+        raise typer.Exit(2)
+    if control_hz < 0:
+        err_console.print("[red]--control-hz must be >= 0[/red]")
+        raise typer.Exit(2)
+    if max_roundtrip_p95_ms < 0:
+        err_console.print("[red]--max-roundtrip-p95-ms must be >= 0[/red]")
+        raise typer.Exit(2)
+    if max_jitter_p95_minus_p50_ms < 0:
+        err_console.print("[red]--max-jitter-p95-minus-p50-ms must be >= 0[/red]")
+        raise typer.Exit(2)
+    if max_deadline_misses < 0 or max_control_budget_misses < 0 or max_act_errors < 0:
+        err_console.print("[red]miss/error budgets must be >= 0[/red]")
+        raise typer.Exit(2)
+
+    import tether.realtime_cert as realtime_mod
+
+    try:
+        receipt = realtime_mod.load_deploy_proof(proof)
+        report = realtime_mod.build_realtime_certificate(
+            receipt,
+            target=target,
+            control_hz=control_hz if control_hz > 0 else None,
+            max_roundtrip_p95_ms=(
+                max_roundtrip_p95_ms if max_roundtrip_p95_ms > 0 else None
+            ),
+            max_jitter_p95_minus_p50_ms=(
+                max_jitter_p95_minus_p50_ms
+                if max_jitter_p95_minus_p50_ms > 0
+                else None
+            ),
+            max_deadline_misses=max_deadline_misses,
+            max_control_budget_misses=max_control_budget_misses,
+            max_act_errors=max_act_errors,
+        )
+        if output_dir:
+            realtime_mod.write_realtime_certificate(report, output_dir)
+    except realtime_mod.RealtimeCertificateError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(2)
+
+    if output_format == "json":
+        typer.echo(json.dumps(report, indent=2))
+    elif output_format == "markdown":
+        typer.echo(realtime_mod.format_realtime_certificate_markdown(report))
+    else:
+        console.print(realtime_mod.format_realtime_certificate_human(report), markup=False)
+        if output_dir:
+            console.print(f"\n  [dim]Realtime cert packet:[/dim] {output_dir}")
+
+    if report.get("decision") != "PASS":
+        raise typer.Exit(1)
+
+
 @app.command(name="bench", hidden=True)
 def benchmark_cmd(
-    export_dir: str = typer.Argument(help="Path to exported model directory"),
+    export_dir: str = typer.Argument(
+        help="Path to exported model directory, or 'realtime' for a proof certificate"
+    ),
+    realtime_proof: Optional[str] = typer.Argument(
+        None,
+        help="For `bench realtime`: deployment proof packet directory or JSON path.",
+    ),
     iterations: int = typer.Option(100, help="Number of benchmark iterations"),
     warmup: int = typer.Option(20, help="Warmup iterations (excluded from stats)"),
     device: str = typer.Option("cuda", help="Device: cuda or cpu"),
@@ -888,6 +971,56 @@ def benchmark_cmd(
              "you cite a number that re-runs identically.",
     ),
     verbose: bool = typer.Option(False, help="Verbose logging"),
+    realtime_target: str = typer.Option(
+        "",
+        "--target",
+        help="For `bench realtime`: hardware/cell label written into the certificate.",
+    ),
+    control_hz: float = typer.Option(
+        0.0,
+        "--control-hz",
+        help="For `bench realtime`: robot control rate. 0 uses proof/profile evidence.",
+    ),
+    max_roundtrip_p95_ms: float = typer.Option(
+        0.0,
+        "--max-roundtrip-p95-ms",
+        help="For `bench realtime`: p95 budget. 0 uses the control period.",
+    ),
+    max_jitter_p95_minus_p50_ms: float = typer.Option(
+        0.0,
+        "--max-jitter-p95-minus-p50-ms",
+        help="For `bench realtime`: optional jitter budget. 0 uses proof profile or skips.",
+    ),
+    max_deadline_misses: int = typer.Option(
+        0,
+        "--max-deadline-misses",
+        help="For `bench realtime`: allowed deadline misses.",
+    ),
+    max_control_budget_misses: int = typer.Option(
+        0,
+        "--max-control-budget-misses",
+        help="For `bench realtime`: allowed samples slower than the control period.",
+    ),
+    max_act_errors: int = typer.Option(
+        0,
+        "--max-act-errors",
+        help="For `bench realtime`: allowed /act errors.",
+    ),
+    realtime_output_dir: str = typer.Option(
+        "",
+        "--output-dir",
+        help="For `bench realtime`: write realtime-serving-cert artifacts here.",
+    ),
+    output_format: str = typer.Option(
+        "human",
+        "--format",
+        help="For `bench realtime`: output format: human, json, or markdown.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="For `bench realtime`: alias for --format json.",
+    ),
 ):
     """Benchmark exported model — latency (default) and optional task success.
 
@@ -902,6 +1035,45 @@ def benchmark_cmd(
     parity + latency, not sim benchmarking. Archived scripts live at
     archive/scripts/ if you want to resurrect them.
     """
+    if export_dir == "realtime":
+        if not realtime_proof:
+            err_console.print(
+                "[red]Usage: tether bench realtime <proof-dir-or-deployment-proof.json>[/red]"
+            )
+            raise typer.Exit(2)
+        _bench_realtime_cmd(
+            realtime_proof,
+            target=realtime_target,
+            control_hz=control_hz,
+            max_roundtrip_p95_ms=max_roundtrip_p95_ms,
+            max_jitter_p95_minus_p50_ms=max_jitter_p95_minus_p50_ms,
+            max_deadline_misses=max_deadline_misses,
+            max_control_budget_misses=max_control_budget_misses,
+            max_act_errors=max_act_errors,
+            output_dir=realtime_output_dir,
+            output_format=output_format,
+            json_output=json_output,
+        )
+        return
+
+    if realtime_proof is not None:
+        err_console.print(
+            "[red]Unexpected extra argument. Did you mean `tether bench realtime "
+            f"{realtime_proof}`?[/red]"
+        )
+        raise typer.Exit(2)
+    if (
+        realtime_target
+        or control_hz > 0
+        or max_roundtrip_p95_ms > 0
+        or max_jitter_p95_minus_p50_ms > 0
+        or realtime_output_dir
+        or output_format != "human"
+        or json_output
+    ):
+        err_console.print("[red]Realtime options require `tether bench realtime <proof>`[/red]")
+        raise typer.Exit(2)
+
     _setup_logging(verbose)
     import time as _t
     import numpy as np
@@ -3506,6 +3678,11 @@ def deploy_proof(
         "--deadline-ms",
         help="Per-request deadline passed through to tether serve. 0 disables.",
     ),
+    control_hz: float = typer.Option(
+        0.0,
+        "--control-hz",
+        help="Robot control rate for latency/control-budget evidence. 0 uses the profile.",
+    ),
     max_concurrent: int = typer.Option(
         0,
         "--max-concurrent",
@@ -3594,6 +3771,9 @@ def deploy_proof(
     if samples < 1:
         err_console.print("[red]--samples must be >= 1[/red]")
         raise typer.Exit(2)
+    if control_hz < 0:
+        err_console.print("[red]--control-hz must be >= 0[/red]")
+        raise typer.Exit(2)
     valid_policy_diff_fail_on = {"", "none", "actions", "latency", "guard", "shape", "any"}
     if policy_diff_fail_on not in valid_policy_diff_fail_on:
         err_console.print(
@@ -3629,6 +3809,7 @@ def deploy_proof(
             safety_config=safety_config or None,
             api_key=api_key or None,
             deadline_ms=deadline_ms,
+            control_hz=control_hz if control_hz > 0 else None,
             max_concurrent=max_concurrent,
             record_dir=record_dir or None,
             record_images=record_images,
