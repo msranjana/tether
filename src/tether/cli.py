@@ -1,6 +1,7 @@
 """Tether CLI — deploy VLA models to edge hardware."""
 
 from __future__ import annotations
+from rich.logging import RichHandler
 
 import json
 import logging
@@ -59,10 +60,15 @@ _NOARGS_SUMMARY = """[bold]tether[/bold] — deployment confidence for VLA robot
 def _setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
-        level=level,
-        format="%(levelname)s %(name)s: %(message)s",
-        stream=sys.stderr,
-    )
+    level=level,
+    format="%(message)s",
+    handlers=[
+        RichHandler(
+            rich_tracebacks=True,
+            show_path=False,
+        )
+    ],
+)
 
 
 def _tether_home() -> Path:
